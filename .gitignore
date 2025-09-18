@@ -1,0 +1,29 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment folders (e.g., venv, env)
+venv/
+.venv/
+env/
+.env/
+myenv/
+
+# Downloaded models and temporary media files
+# Your code downloads/creates these, so they shouldn't be in version control.
+*.onnx
+*.pcm
+*.mp3
+
+# IDE/Editor specific files
+.vscode/
+.idea/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log

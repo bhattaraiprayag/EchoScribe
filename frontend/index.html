@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Realtime Audio Transcription</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        #transcript-container { min-height: 200px; }
+        #interim-transcript { color: #888; }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+
+    <div class="bg-white rounded-xl shadow-lg p-8 md:p-12 w-full max-w-4xl">
+        <div class="text-center">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">Realtime Audio Transcription</h1>
+            <p class="text-gray-500 mb-6">Powered by Faster-Whisper & Silero VAD</p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 bg-gray-50 p-4 rounded-lg">
+            <div>
+                <label for="model-select" class="block text-sm font-medium text-gray-700">Whisper Model</label>
+                <select id="model-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                    </select>
+            </div>
+            <div>
+                <label for="device-select" class="block text-sm font-medium text-gray-700">Compute Device</label>
+                <select id="device-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                    </select>
+            </div>
+        </div>
+
+
+        <div class="flex items-center justify-center space-x-4 mb-6">
+            <button id="startButton" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105 disabled:bg-gray-400">
+                Start Recording
+            </button>
+            <button id="stopButton" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105 disabled:bg-gray-400" disabled>
+                Stop Recording
+            </button>
+        </div>
+        <div class="text-center mb-6">
+            <p class="text-lg text-gray-700"><strong>Status:</strong> <span id="status">Loading...</span></p>
+        </div>
+
+        <div class="w-full bg-gray-50 rounded-lg p-4 border border-gray-200">
+            <h2 class="text-xl font-semibold text-gray-800 mb-2">Transcript</h2>
+            <div id="transcript-container" class="text-left text-gray-800 whitespace-pre-wrap">
+                <span id="final-transcript"></span><span id="interim-transcript"></span>
+            </div>
+        </div>
+        
+        <div id="download-container" class="text-center mt-6 hidden">
+            <a id="downloadLink" class="inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105">
+                Download Recording (MP3)
+            </a>
+        </div>
+    </div>
+    <script>
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const statusSpan = document.getElementById('status');
+        const finalTranscriptSpan = document.getElementById('final-transcript');
+        const interimTranscriptSpan = document.getElementById('interim-transcript');
+        const downloadContainer = document.getElementById('download-container');
+        const downloadLink = document.getElementById('downloadLink');
+        const modelSelect = document.getElementById('model-select');
+        const deviceSelect = document.getElementById('device-select');
+
+        let audioContext;
+        let workletNode;
+        let mediaStream;
+        let websocket;
+        let sessionId;
+
+        // --- NEW: Dynamic Configuration Loading ---
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const response = await fetch('/api/config');
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch config: ${response.statusText}`);
+                }
+                const config = await response.json();
+
+                // Populate model dropdown
+                const modelLabels = {
+                    'tiny': 'Tiny (Fastest)',
+                    'base': 'Base',
+                    'small': 'Small',
+                    'medium': 'Medium',
+                    'turbo': "Turbo",
+                    'distil-large-v3': "Distilled Large V3",
+                    'large-v3': "Large V3"
+                };
+                config.models.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model;
+                    option.textContent = modelLabels[model] || model;
+                    if (model === 'base') option.selected = true; // Set default
+                    modelSelect.appendChild(option);
+                });
+
+                // Populate device dropdown
+                const deviceLabels = {
+                    'cpu': 'CPU',
+                    'cuda': 'GPU (CUDA)',
+                    'mps': 'GPU (Apple MPS)'
+                };
+                config.devices.forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device;
+                    option.textContent = deviceLabels[device] || device;
+                    deviceSelect.appendChild(option);
+                });
+                
+                updateUI('idle'); // Enable UI after config is loaded
+            } catch (error) {
+                console.error("Failed to load configuration:", error);
+                updateUI('error', 'Could not load server configuration.');
+            }
+        });
+
+
+        const connectWebSocket = () => {
+            sessionId = generateUUID();
+            const wsUrl = `ws://${window.location.host}/ws/${sessionId}`;
+            websocket = new WebSocket(wsUrl);
+
+            websocket.onopen = () => {
+                console.log("WebSocket connection established.");
+                updateUI('connected');
+                
+                // Send configuration as the first message
+                const config = {
+                    model: modelSelect.value,
+                    device: deviceSelect.value
+                };
+                websocket.send(JSON.stringify(config));
+            };
+
+            websocket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'final') {
+                    finalTranscriptSpan.textContent += data.text + ' ';
+                    interimTranscriptSpan.textContent = '';
+                } else if (data.type === 'interim') {
+                    // Interim results are not implemented in the provided backend, but this is where you'd handle them.
+                }
+            };
+
+            websocket.onclose = (event) => {
+                console.log(`WebSocket connection closed: ${event.code}`);
+                stopAudioProcessing();
+            };
+
+            websocket.onerror = (error) => {
+                console.error("WebSocket error:", error);
+                updateUI('error', 'WebSocket connection error.');
+                stopAudioProcessing();
+            };
+        };
+
+        const startAudioProcessing = async () => {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+
+            try {
+                await audioContext.audioWorklet.addModule('worklet.js');
+                
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+
+                source.connect(workletNode);
+                workletNode.connect(audioContext.destination);
+
+                workletNode.port.onmessage = (event) => {
+                    if (websocket && websocket.readyState === WebSocket.OPEN) {
+                        websocket.send(event.data);
+                    }
+                };
+
+                workletNode.port.postMessage({ command: 'start' });
+                
+            } catch (error) {
+                console.error("Error starting audio processing:", error);
+                updateUI('error', 'Could not access microphone.');
+            }
+        };
+
+        const stopAudioProcessing = () => {
+            if (workletNode) {
+                workletNode.port.postMessage({ command: 'stop' });
+                workletNode.disconnect();
+                workletNode = null;
+            }
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+             if (audioContext && audioContext.state !== 'closed') {
+                try {
+                    audioContext.close();
+                } catch(e) {
+                    console.warn("AudioContext already closed or closing.");
+                }
+                audioContext = null;
+            }
+        };
+
+        const startRecording = async () => {
+            updateUI('connecting');
+            connectWebSocket();
+            await startAudioProcessing();
+        };
+
+        const stopRecording = () => {
+            if (websocket) {
+                websocket.close();
+            }
+            stopAudioProcessing(); 
+            updateUI('stopped');
+        };
+
+        const updateUI = (state, message = '') => {
+            switch (state) {
+                case 'idle':
+                    statusSpan.textContent = 'Idle';
+                    startButton.disabled = false;
+                    stopButton.disabled = true;
+                    [modelSelect, deviceSelect].forEach(el => el.disabled = false);
+                    downloadContainer.classList.add('hidden');
+                    break;
+                case 'connecting':
+                    statusSpan.textContent = 'Connecting to server...';
+                    startButton.disabled = true;
+                    stopButton.disabled = true;
+                    break;
+                case 'connected':
+                    statusSpan.textContent = 'Connected. Start speaking.';
+                    startButton.disabled = true;
+                    stopButton.disabled = false;
+                    [modelSelect, deviceSelect].forEach(el => el.disabled = true);
+                    finalTranscriptSpan.textContent = '';
+                    interimTranscriptSpan.textContent = '';
+                    downloadContainer.classList.add('hidden'); // Ensure download link is hidden on new recording
+                    break;
+                case 'stopped':
+                    statusSpan.textContent = 'Recording stopped. Ready to download.';
+                    startButton.disabled = false;
+                    stopButton.disabled = true;
+                    [modelSelect, deviceSelect].forEach(el => el.disabled = false);
+                    downloadLink.href = `/download/${sessionId}`;
+                    downloadContainer.classList.remove('hidden');
+                    break;
+                case 'error':
+                    statusSpan.textContent = `Error: ${message}`;
+                    startButton.disabled = false;
+                    stopButton.disabled = true;
+                    [modelSelect, deviceSelect].forEach(el => el.disabled = false);
+                    break;
+            }
+        };
+
+        function generateUUID() {
+            return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+                (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+            );
+        }
+
+        startButton.addEventListener('click', startRecording);
+        stopButton.addEventListener('click', stopRecording);
+        
+        // Initially disable buttons until config is loaded
+        startButton.disabled = true;
+        stopButton.disabled = true;
+    </script>
+</body>
+</html>

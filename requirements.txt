@@ -1,0 +1,10 @@
+# requirements.txt
+fastapi
+websockets
+uvicorn
+silero-vad
+numpy
+faster-whisper
+ffmpeg-python
+torch
+torchaudio
