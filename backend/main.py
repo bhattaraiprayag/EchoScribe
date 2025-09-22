@@ -5,13 +5,16 @@ import uuid
 import logging
 import platform
 from typing import Dict, List
+import asyncio
 
 import torch
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, Request, UploadFile, File, Form
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from pipeline import TranscriptionSession, convert_pcm_to_mp3
+from config_manager import config_data, save_config
+from faster_whisper import WhisperModel
 
 # --- Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -19,11 +22,93 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# In-memory store for active sessions
+# In-memory store for active sessions and transcription jobs
 sessions: Dict[str, TranscriptionSession] = {}
+transcription_jobs: Dict[str, Dict] = {}
+model_cache: Dict[str, WhisperModel] = {}
+
+
+# --- Model Loading ---
+def get_whisper_model(model_size: str, device: str) -> WhisperModel:
+    """Loads a Whisper model from cache or creates a new one."""
+    model_key = f"{model_size}_{device}"
+    if model_key not in model_cache:
+        logger.info(f"Loading Whisper model '{model_size}' on '{device}'...")
+        compute_type = "int8" if device == "cpu" else "float16"
+        model_cache[model_key] = WhisperModel(model_size, device=device, compute_type=compute_type)
+        logger.info(f"Whisper model '{model_key}' loaded and cached.")
+    return model_cache[model_key]
 
 
 # --- API Routes ---
+@app.get("/api/settings")
+def get_settings():
+    """Returns the current application settings."""
+    return JSONResponse(content=config_data)
+
+@app.post("/api/settings")
+async def set_settings(request: Request):
+    """Updates the application settings."""
+    new_settings = await request.json()
+    config_data.update(new_settings)
+    save_config(config_data)
+    return JSONResponse(content={"message": "Settings updated successfully"})
+
+@app.post("/api/transcribe")
+async def transcribe_file(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    model: str = Form("base"),
+    language: str = Form("en"),
+    device: str = Form("cpu")
+):
+    job_id = str(uuid.uuid4())
+    transcription_jobs[job_id] = {"status": "processing", "result": ""}
+
+    file_path = f"temp_{job_id}_{file.filename}"
+    with open(file_path, "wb") as buffer:
+        buffer.write(await file.read())
+
+    background_tasks.add_task(
+        run_file_transcription,
+        job_id,
+        file_path,
+        model,
+        language,
+        device
+    )
+
+    return JSONResponse(content={"job_id": job_id})
+
+@app.get("/api/transcribe/status/{job_id}")
+async def get_transcription_status(job_id: str):
+    job = transcription_jobs.get(job_id)
+    if not job:
+        return JSONResponse(content={"error": "Job not found"}, status_code=404)
+    return JSONResponse(content=job)
+
+def run_file_transcription(job_id: str, file_path: str, model_size: str, language: str, device: str):
+    """Background task to transcribe an audio file."""
+    try:
+        logger.info(f"[{job_id}] Starting file transcription for {file_path}")
+        model = get_whisper_model(model_size, device)
+
+        segments, _ = model.transcribe(file_path, language=language, beam_size=5)
+        
+        result_text = " ".join([seg.text for seg in segments]).strip()
+        
+        transcription_jobs[job_id] = {"status": "completed", "result": result_text}
+        logger.info(f"[{job_id}] File transcription completed successfully.")
+
+    except Exception as e:
+        logger.error(f"[{job_id}] Error during file transcription: {e}", exc_info=True)
+        transcription_jobs[job_id] = {"status": "error", "result": str(e)}
+    finally:
+        # Clean up the temporary file
+        if os.path.exists(file_path):
+            os.unlink(file_path)
+        # We don't clean up the model from memory anymore because it's cached
+
 @app.get("/api/config")
 def get_config():
     """Returns the available models and compute devices."""
@@ -38,9 +123,16 @@ def get_config():
         devices.append("mps")
 
     # Define available Whisper models
-    models: List[str] = ["tiny", "base", "small", "medium", "turbo", "distil-large-v3", "large-v3"]
+    models: List[str] = ["tiny", "base", "small", "medium", "large-v3", "distil-large-v3"]
+    
+    # Define available languages (subset of Whisper-supported languages)
+    languages = {
+        "en": "English", "es": "Spanish", "fr": "French", "de": "German", 
+        "it": "Italian", "pt": "Portuguese", "ru": "Russian", "zh": "Chinese", 
+        "ja": "Japanese", "ko": "Korean"
+    }
 
-    return JSONResponse(content={"devices": devices, "models": models})
+    return JSONResponse(content={"devices": devices, "models": models, "languages": languages})
 
 
 @app.websocket("/ws/{session_id}")
@@ -49,10 +141,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     logger.info(f"WebSocket connection accepted for session_id: {session_id}")
     session = None # Ensure session is defined for the finally block
     try:
-        config_data = await websocket.receive_json()    # First message is configuration
-        logger.info(f"[{session_id}] Received configuration: {config_data}")
+        client_config = await websocket.receive_json()    # First message is configuration
+        logger.info(f"[{session_id}] Received configuration: {client_config}")
 
-        session = TranscriptionSession(session_id, websocket, config_data)
+        # Get model from cache
+        model_size = client_config.get("model", "tiny")
+        device = client_config.get("device", "cpu")
+        whisper_model = get_whisper_model(model_size, device)
+
+        session = TranscriptionSession(session_id, websocket, client_config, whisper_model)
         sessions[session_id] = session
 
         await session.run_pipeline()

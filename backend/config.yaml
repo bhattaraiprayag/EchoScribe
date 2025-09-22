@@ -1,0 +1,10 @@
+audio_parameters:
+  channels: 1
+  sample_rate: 16000
+  sample_width: 2
+transcription_parameters:
+  context_max_length: 224
+vad_parameters:
+  min_speech_duration: 0.1
+  prob_threshold: 0.7
+  silence_duration: 0.7

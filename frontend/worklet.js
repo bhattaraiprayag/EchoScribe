@@ -1,9 +1,8 @@
 // frontend/worklet.js
 
 /**
- * An AudioWorkletProcessor for downsampling and converting audio to 16-bit PCM.
- * It receives audio from the microphone, processes it, and sends the raw
- * PCM data back to the main thread.
+ * An AudioWorkletProcessor for downsampling, converting audio to 16-bit PCM,
+ * and calculating audio volume.
  */
 class AudioProcessor extends AudioWorkletProcessor {
     constructor() {
@@ -46,10 +45,20 @@ class AudioProcessor extends AudioWorkletProcessor {
         while (this.buffer.length >= chunkSize) {
             const chunk = this.buffer.splice(0, chunkSize);
             const pcmData = this.convertTo16BitPCM(chunk);
-            this.port.postMessage(pcmData.buffer, [pcmData.buffer]);
+            const volume = this.calculateRMS(chunk);
+            this.port.postMessage({ pcmData: pcmData.buffer, volume }, [pcmData.buffer]);
         }
 
         return true; // Keep processor alive
+    }
+
+    calculateRMS(input) {
+        let sumOfSquares = 0;
+        for (let i = 0; i < input.length; i++) {
+            sumOfSquares += input[i] * input[i];
+        }
+        const rms = Math.sqrt(sumOfSquares / input.length);
+        return rms;
     }
 
     convertTo16BitPCM(input) {
