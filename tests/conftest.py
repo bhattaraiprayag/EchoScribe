@@ -1,5 +1,7 @@
 # tests/conftest.py
+
 import pytest
+
 
 BASE_URL = "http://localhost:8000"
 

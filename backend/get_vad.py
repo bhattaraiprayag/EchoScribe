@@ -2,6 +2,7 @@
 
 import torch
 
+
 def download_silero_vad():
     """
     Downloads the Silero VAD model to the current directory.
@@ -16,6 +17,7 @@ def download_silero_vad():
     except Exception as e:
         print(f"Error downloading model: {e}")
         print("Please check your internet connection and PyTorch installation.")
+
 
 if __name__ == "__main__":
     download_silero_vad()

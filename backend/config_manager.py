@@ -1,14 +1,17 @@
 # backend/config_manager.py
+
 import yaml
 import logging
 from typing import Dict, Any
 import os
 
-# Make path absolute to this file's directory to avoid CWD issues
+
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(CURRENT_DIR, "config.yaml")
 
+
 logger = logging.getLogger(__name__)
+
 
 def load_config() -> Dict[str, Any]:
     """Loads the YAML configuration from the file."""
@@ -24,6 +27,7 @@ def load_config() -> Dict[str, Any]:
         logger.error(f"Error parsing YAML file: {e}")
         return {}
 
+
 def save_config(config: Dict[str, Any]):
     """Saves the configuration to the YAML file."""
     try:
@@ -32,6 +36,7 @@ def save_config(config: Dict[str, Any]):
         logger.info("Configuration saved successfully.")
     except Exception as e:
         logger.error(f"Error saving configuration: {e}")
+
 
 # Load initial config
 config_data = load_config()

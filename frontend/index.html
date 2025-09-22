@@ -33,7 +33,6 @@
         </div>
         <h3 class="text-lg font-semibold mt-6 mb-2">Job Status</h3>
         <div id="job-status-container" class="space-y-2 overflow-y-auto">
-            <!-- Job statuses will be injected here -->
         </div>
     </aside>
 
@@ -217,7 +216,6 @@
                     const data = JSON.parse(event.data);
                     if (data.type === 'final') {
                         finalTranscriptSpan.textContent += data.text + ' ';
-                        // No longer need to clear interim, but will scroll to bottom
                         scrollToBottom();
                     }
                 };
@@ -348,7 +346,7 @@
             // --- Transcript Management ---
             copyButton.addEventListener('click', () => {
                 const text = finalTranscriptSpan.textContent.trim();
-                if (!text) return; // Don't copy if there's nothing to copy
+                if (!text) return;
                 navigator.clipboard.writeText(text).then(() => {
                     showToast('Transcript copied!');
                 }).catch(err => {

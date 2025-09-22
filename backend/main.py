@@ -16,13 +16,13 @@ from pipeline import TranscriptionSession, convert_pcm_to_mp3
 from config_manager import config_data, save_config
 from faster_whisper import WhisperModel
 
+
 # --- Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# In-memory store for active sessions and transcription jobs
 sessions: Dict[str, TranscriptionSession] = {}
 transcription_jobs: Dict[str, Dict] = {}
 model_cache: Dict[str, WhisperModel] = {}
@@ -46,6 +46,7 @@ def get_settings():
     """Returns the current application settings."""
     return JSONResponse(content=config_data)
 
+
 @app.post("/api/settings")
 async def set_settings(request: Request):
     """Updates the application settings."""
@@ -53,6 +54,7 @@ async def set_settings(request: Request):
     config_data.update(new_settings)
     save_config(config_data)
     return JSONResponse(content={"message": "Settings updated successfully"})
+
 
 @app.post("/api/transcribe")
 async def transcribe_file(
@@ -80,12 +82,14 @@ async def transcribe_file(
 
     return JSONResponse(content={"job_id": job_id})
 
+
 @app.get("/api/transcribe/status/{job_id}")
 async def get_transcription_status(job_id: str):
     job = transcription_jobs.get(job_id)
     if not job:
         return JSONResponse(content={"error": "Job not found"}, status_code=404)
     return JSONResponse(content=job)
+
 
 def run_file_transcription(job_id: str, file_path: str, model_size: str, language: str, device: str):
     """Background task to transcribe an audio file."""
@@ -104,28 +108,23 @@ def run_file_transcription(job_id: str, file_path: str, model_size: str, languag
         logger.error(f"[{job_id}] Error during file transcription: {e}", exc_info=True)
         transcription_jobs[job_id] = {"status": "error", "result": str(e)}
     finally:
-        # Clean up the temporary file
         if os.path.exists(file_path):
             os.unlink(file_path)
-        # We don't clean up the model from memory anymore because it's cached
+
 
 @app.get("/api/config")
 def get_config():
     """Returns the available models and compute devices."""
     logger.info("Serving configuration")
 
-    # Determine available compute devices
     devices: List[str] = ["cpu"]
     if torch.cuda.is_available():
         devices.append("cuda")
-    # Check for Apple Silicon MPS
     if platform.system() == "Darwin" and torch.backends.mps.is_available():
         devices.append("mps")
 
-    # Define available Whisper models
     models: List[str] = ["tiny", "base", "small", "medium", "large-v3", "distil-large-v3"]
-    
-    # Define available languages (subset of Whisper-supported languages)
+
     languages = {
         "en": "English", "es": "Spanish", "fr": "French", "de": "German", 
         "it": "Italian", "pt": "Portuguese", "ru": "Russian", "zh": "Chinese", 
@@ -139,9 +138,9 @@ def get_config():
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
     logger.info(f"WebSocket connection accepted for session_id: {session_id}")
-    session = None # Ensure session is defined for the finally block
+    session = None
     try:
-        client_config = await websocket.receive_json()    # First message is configuration
+        client_config = await websocket.receive_json()
         logger.info(f"[{session_id}] Received configuration: {client_config}")
 
         # Get model from cache
