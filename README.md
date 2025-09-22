@@ -34,6 +34,8 @@ pip install fastapi websockets uvicorn silero-vad numpy faster-whisper ffmpeg-py
 ```
 
 ## **Running the Application**
+
+### **For Production**
 1. **Navigate to the backend directory**:
 ```bash
 cd backend
@@ -42,6 +44,20 @@ cd backend
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
+
+### **For Development (with Hot-Reload)**
+For development, it is recommended to run the server with hot-reloading enabled. This will automatically restart the server whenever you make a change to a backend Python file.
+
+1. **Navigate to the backend directory**:
+```bash
+cd backend
+```
+2. **Start the development server**:
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+**Note:** For changes to frontend files (`index.html`, `worklet.js`), you only need to refresh your browser.
+
 3. **Access the web application in your browser**:
 ```bash
 http://localhost:8000/

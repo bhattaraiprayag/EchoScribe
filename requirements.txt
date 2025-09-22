@@ -8,3 +8,11 @@ faster-whisper
 ffmpeg-python
 torch
 torchaudio
+pyyaml
+python-multipart
+
+# Testing
+pytest
+httpx
+websockets
+pytest-asyncio

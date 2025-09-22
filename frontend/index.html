@@ -3,281 +3,512 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Realtime Audio Transcription</title>
+    <title>EchoScribe - Realtime & Batch Transcription</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
         body { font-family: 'Inter', sans-serif; }
-        #transcript-container { min-height: 200px; }
+        #transcript-container { min-height: 200px; max-height: 400px; }
         #interim-transcript { color: #888; }
+        .pulse { animation: pulse-animation 1s infinite; }
+        @keyframes pulse-animation {
+            0% { transform: scale(1); opacity: 0.7; }
+            50% { transform: scale(1.1); opacity: 1; }
+            100% { transform: scale(1); opacity: 0.7; }
+        }
     </style>
 </head>
-<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+<body class="bg-gray-100 text-gray-800 flex h-screen">
 
-    <div class="bg-white rounded-xl shadow-lg p-8 md:p-12 w-full max-w-4xl">
-        <div class="text-center">
-            <h1 class="text-4xl font-bold text-gray-800 mb-2">Realtime Audio Transcription</h1>
-            <p class="text-gray-500 mb-6">Powered by Faster-Whisper & Silero VAD</p>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 bg-gray-50 p-4 rounded-lg">
-            <div>
-                <label for="model-select" class="block text-sm font-medium text-gray-700">Whisper Model</label>
-                <select id="model-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
-                    </select>
-            </div>
-            <div>
-                <label for="device-select" class="block text-sm font-medium text-gray-700">Compute Device</label>
-                <select id="device-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
-                    </select>
-            </div>
-        </div>
-
-
-        <div class="flex items-center justify-center space-x-4 mb-6">
-            <button id="startButton" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105 disabled:bg-gray-400">
-                Start Recording
-            </button>
-            <button id="stopButton" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105 disabled:bg-gray-400" disabled>
-                Stop Recording
+    <!-- Sidebar for Batch Transcription -->
+    <aside class="w-1/4 bg-white p-6 border-r border-gray-200 flex flex-col">
+        <h2 class="text-2xl font-bold mb-4">Batch Transcription</h2>
+        <div class="border rounded-lg p-4">
+            <label for="file-upload" class="block text-sm font-medium text-gray-700 mb-2">Upload Audio File</label>
+            <input id="file-upload" type="file" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+            <button id="upload-button" class="mt-4 w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition-all duration-300 ease-in-out disabled:bg-gray-400">
+                Start Transcription
             </button>
         </div>
-        <div class="text-center mb-6">
-            <p class="text-lg text-gray-700"><strong>Status:</strong> <span id="status">Loading...</span></p>
+        <h3 class="text-lg font-semibold mt-6 mb-2">Job Status</h3>
+        <div id="job-status-container" class="space-y-2 overflow-y-auto">
+            <!-- Job statuses will be injected here -->
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 p-8 md:p-12 flex flex-col">
+        <div class="flex justify-between items-center mb-6">
+            <div>
+                <h1 class="text-4xl font-bold text-gray-800">EchoScribe</h1>
+                <p class="text-gray-500">Realtime Transcription & Audio Processing</p>
+            </div>
+            <button id="settings-button" class="text-gray-500 hover:text-gray-800">
+                <i class="fas fa-cog fa-2x"></i>
+            </button>
         </div>
 
-        <div class="w-full bg-gray-50 rounded-lg p-4 border border-gray-200">
-            <h2 class="text-xl font-semibold text-gray-800 mb-2">Transcript</h2>
-            <div id="transcript-container" class="text-left text-gray-800 whitespace-pre-wrap">
-                <span id="final-transcript"></span><span id="interim-transcript"></span>
+        <!-- Realtime Transcription Panel -->
+        <div class="bg-white rounded-xl shadow-lg p-8 w-full flex-1 flex flex-col">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 bg-gray-50 p-4 rounded-lg">
+                <div>
+                    <label for="model-select" class="block text-sm font-medium text-gray-700">Whisper Model</label>
+                    <select id="model-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"></select>
+                </div>
+                <div>
+                    <label for="device-select" class="block text-sm font-medium text-gray-700">Compute Device</label>
+                    <select id="device-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"></select>
+                </div>
+                 <div>
+                    <label for="language-select" class="block text-sm font-medium text-gray-700">Language</label>
+                    <select id="language-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"></select>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-center space-x-6 mb-6">
+                <button id="startButton" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105 disabled:bg-gray-400">Start Recording</button>
+                <div id="audio-visualizer" class="w-10 h-10 bg-green-500 rounded-full transition-transform duration-100 ease-in-out"></div>
+                <button id="stopButton" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105 disabled:bg-gray-400" disabled>Stop Recording</button>
+            </div>
+            <div class="text-center mb-6">
+                <p class="text-lg text-gray-700"><strong>Status:</strong> <span id="status">Loading...</span></p>
+            </div>
+
+            <div class="w-full bg-gray-50 rounded-lg p-4 border border-gray-200 flex-1 overflow-y-auto">
+                <div class="flex justify-between items-center mb-2">
+                    <h2 class="text-xl font-semibold text-gray-800">Transcript</h2>
+                    <div>
+                        <button id="copy-button" class="px-3 py-1 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Copy</button>
+                        <button id="download-txt-button" class="px-3 py-1 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Download .txt</button>
+                    </div>
+                </div>
+                <div id="transcript-container" class="text-left text-gray-800 whitespace-pre-wrap">
+                    <span id="final-transcript"></span><span id="interim-transcript"></span>
+                </div>
+            </div>
+            
+            <div id="download-container" class="text-center mt-6 hidden">
+                <a id="downloadLink" class="inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg">Download Recording (MP3)</a>
             </div>
         </div>
-        
-        <div id="download-container" class="text-center mt-6 hidden">
-            <a id="downloadLink" class="inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105">
-                Download Recording (MP3)
-            </a>
+    </main>
+    
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-2xl">
+            <h2 class="text-2xl font-bold mb-4">Settings</h2>
+            <form id="settings-form">
+                <fieldset>
+                    <legend class="font-semibold text-lg mb-2">Voice Activity Detection (VAD)</legend>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label for="vad_prob_threshold" class="block text-sm font-medium">Speech Probability Threshold</label>
+                            <div class="flex items-center space-x-3 mt-1">
+                                <input type="range" id="vad_prob_threshold" name="vad_parameters.prob_threshold" min="0.1" max="0.9" step="0.05" class="w-full">
+                                <output for="vad_prob_threshold" id="vad_prob_threshold_output" class="font-mono text-sm text-gray-600 w-10 text-center">0.50</output>
+                            </div>
+                        </div>
+                        <div>
+                            <label for="vad_silence_duration" class="block text-sm font-medium">Silence Duration (s)</label>
+                            <input type="number" id="vad_silence_duration" name="vad_parameters.silence_duration" min="0.1" max="5" step="0.1" class="w-full mt-1 border-gray-300 rounded-md">
+                        </div>
+                         <div>
+                            <label for="vad_min_speech_duration" class="block text-sm font-medium">Minimum Speech Duration (s)</label>
+                            <input type="number" id="vad_min_speech_duration" name="vad_parameters.min_speech_duration" min="0.1" max="2" step="0.1" class="w-full mt-1 border-gray-300 rounded-md">
+                        </div>
+                    </div>
+                </fieldset>
+                <div class="mt-6 flex justify-end space-x-4">
+                    <button type="button" id="cancel-settings" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded">Cancel</button>
+                    <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">Save Changes</button>
+                </div>
+            </form>
         </div>
     </div>
+
+    <!-- Toast Notification -->
+    <div id="toast-notification" class="fixed bottom-5 right-5 bg-gray-800 text-white py-2 px-4 rounded-lg shadow-lg flex items-center transition-opacity duration-300 ease-in-out opacity-0 invisible">
+        <span id="toast-message"></span>
+        <button id="toast-close" class="ml-4 text-gray-400 hover:text-white font-bold">&times;</button>
+    </div>
+
     <script>
-        const startButton = document.getElementById('startButton');
-        const stopButton = document.getElementById('stopButton');
-        const statusSpan = document.getElementById('status');
-        const finalTranscriptSpan = document.getElementById('final-transcript');
-        const interimTranscriptSpan = document.getElementById('interim-transcript');
-        const downloadContainer = document.getElementById('download-container');
-        const downloadLink = document.getElementById('downloadLink');
-        const modelSelect = document.getElementById('model-select');
-        const deviceSelect = document.getElementById('device-select');
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- UI Elements ---
+            const startButton = document.getElementById('startButton');
+            const stopButton = document.getElementById('stopButton');
+            const statusSpan = document.getElementById('status');
+            const finalTranscriptSpan = document.getElementById('final-transcript');
+            const interimTranscriptSpan = document.getElementById('interim-transcript');
+            const downloadContainer = document.getElementById('download-container');
+            const downloadLink = document.getElementById('downloadLink');
+            const modelSelect = document.getElementById('model-select');
+            const deviceSelect = document.getElementById('device-select');
+            const languageSelect = document.getElementById('language-select');
+            const audioVisualizer = document.getElementById('audio-visualizer');
+            const copyButton = document.getElementById('copy-button');
+            const downloadTxtButton = document.getElementById('download-txt-button');
+            const settingsButton = document.getElementById('settings-button');
+            const settingsModal = document.getElementById('settings-modal');
+            const settingsForm = document.getElementById('settings-form');
+            const cancelSettings = document.getElementById('cancel-settings');
+            const fileUpload = document.getElementById('file-upload');
+            const uploadButton = document.getElementById('upload-button');
+            const jobStatusContainer = document.getElementById('job-status-container');
+            const toast = document.getElementById('toast-notification');
+            const toastMessage = document.getElementById('toast-message');
+            const toastClose = document.getElementById('toast-close');
 
-        let audioContext;
-        let workletNode;
-        let mediaStream;
-        let websocket;
-        let sessionId;
+            // --- State ---
+            let audioContext, workletNode, mediaStream, websocket, sessionId;
+            let activePolls = new Set();
+            let toastTimeout;
 
-        // --- NEW: Dynamic Configuration Loading ---
-        document.addEventListener('DOMContentLoaded', async () => {
-            try {
-                const response = await fetch('/api/config');
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch config: ${response.statusText}`);
-                }
-                const config = await response.json();
-
-                // Populate model dropdown
-                const modelLabels = {
-                    'tiny': 'Tiny (Fastest)',
-                    'base': 'Base',
-                    'small': 'Small',
-                    'medium': 'Medium',
-                    'turbo': "Turbo",
-                    'distil-large-v3': "Distilled Large V3",
-                    'large-v3': "Large V3"
-                };
-                config.models.forEach(model => {
-                    const option = document.createElement('option');
-                    option.value = model;
-                    option.textContent = modelLabels[model] || model;
-                    if (model === 'base') option.selected = true; // Set default
-                    modelSelect.appendChild(option);
-                });
-
-                // Populate device dropdown
-                const deviceLabels = {
-                    'cpu': 'CPU',
-                    'cuda': 'GPU (CUDA)',
-                    'mps': 'GPU (Apple MPS)'
-                };
-                config.devices.forEach(device => {
-                    const option = document.createElement('option');
-                    option.value = device;
-                    option.textContent = deviceLabels[device] || device;
-                    deviceSelect.appendChild(option);
-                });
-                
-                updateUI('idle'); // Enable UI after config is loaded
-            } catch (error) {
-                console.error("Failed to load configuration:", error);
-                updateUI('error', 'Could not load server configuration.');
-            }
-        });
-
-
-        const connectWebSocket = () => {
-            sessionId = generateUUID();
-            const wsUrl = `ws://${window.location.host}/ws/${sessionId}`;
-            websocket = new WebSocket(wsUrl);
-
-            websocket.onopen = () => {
-                console.log("WebSocket connection established.");
-                updateUI('connected');
-                
-                // Send configuration as the first message
-                const config = {
-                    model: modelSelect.value,
-                    device: deviceSelect.value
-                };
-                websocket.send(JSON.stringify(config));
-            };
-
-            websocket.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                if (data.type === 'final') {
-                    finalTranscriptSpan.textContent += data.text + ' ';
-                    interimTranscriptSpan.textContent = '';
-                } else if (data.type === 'interim') {
-                    // Interim results are not implemented in the provided backend, but this is where you'd handle them.
+            // --- Initialization ---
+            const initialize = async () => {
+                try {
+                    const response = await fetch('/api/config');
+                    if (!response.ok) throw new Error(`Failed to fetch config: ${response.statusText}`);
+                    const config = await response.json();
+                    populateDropdown(modelSelect, config.models, 'base');
+                    populateDropdown(deviceSelect, config.devices, 'cpu');
+                    populateDropdown(languageSelect, config.languages, 'en');
+                    await loadSettings();
+                    updateUI('idle');
+                } catch (error) {
+                    console.error("Failed to load configuration:", error);
+                    updateUI('error', 'Could not load server configuration.');
                 }
             };
 
-            websocket.onclose = (event) => {
-                console.log(`WebSocket connection closed: ${event.code}`);
-                stopAudioProcessing();
+            const populateDropdown = (selectElement, options, defaultValue) => {
+                const isObject = !Array.isArray(options);
+                selectElement.innerHTML = '';
+                for (const key in options) {
+                    const value = isObject ? key : options[key];
+                    const text = isObject ? options[key] : options[key];
+                    const option = document.createElement('option');
+                    option.value = value;
+                    option.textContent = text;
+                    if (value === defaultValue) option.selected = true;
+                    selectElement.appendChild(option);
+                }
             };
 
-            websocket.onerror = (error) => {
-                console.error("WebSocket error:", error);
-                updateUI('error', 'WebSocket connection error.');
-                stopAudioProcessing();
-            };
-        };
+            // --- WebSocket Communication ---
+            const connectWebSocket = () => {
+                sessionId = generateUUID();
+                const wsUrl = `ws://${window.location.host}/ws/${sessionId}`;
+                websocket = new WebSocket(wsUrl);
 
-        const startAudioProcessing = async () => {
-            if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            }
+                websocket.onopen = () => {
+                    console.log("WebSocket connection established.");
+                    updateUI('connected');
+                    const config = {
+                        model: modelSelect.value,
+                        device: deviceSelect.value,
+                        language: languageSelect.value,
+                    };
+                    websocket.send(JSON.stringify(config));
+                };
 
-            try {
-                await audioContext.audioWorklet.addModule('worklet.js');
-                
-                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
-                const source = audioContext.createMediaStreamSource(mediaStream);
-                workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
-
-                source.connect(workletNode);
-                workletNode.connect(audioContext.destination);
-
-                workletNode.port.onmessage = (event) => {
-                    if (websocket && websocket.readyState === WebSocket.OPEN) {
-                        websocket.send(event.data);
+                websocket.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'final') {
+                        finalTranscriptSpan.textContent += data.text + ' ';
+                        // No longer need to clear interim, but will scroll to bottom
+                        scrollToBottom();
                     }
                 };
 
-                workletNode.port.postMessage({ command: 'start' });
+                websocket.onclose = () => {
+                    console.log("WebSocket connection closed.");
+                    stopAudioProcessing();
+                };
+
+                websocket.onerror = (error) => {
+                    console.error("WebSocket error:", error);
+                    updateUI('error', 'WebSocket connection error.');
+                    stopAudioProcessing();
+                };
+            };
+
+            // --- Audio Processing & Visualization ---
+            const startAudioProcessing = async () => {
+                if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
-            } catch (error) {
-                console.error("Error starting audio processing:", error);
-                updateUI('error', 'Could not access microphone.');
-            }
-        };
-
-        const stopAudioProcessing = () => {
-            if (workletNode) {
-                workletNode.port.postMessage({ command: 'stop' });
-                workletNode.disconnect();
-                workletNode = null;
-            }
-            if (mediaStream) {
-                mediaStream.getTracks().forEach(track => track.stop());
-                mediaStream = null;
-            }
-             if (audioContext && audioContext.state !== 'closed') {
                 try {
-                    audioContext.close();
-                } catch(e) {
-                    console.warn("AudioContext already closed or closing.");
+                    await audioContext.audioWorklet.addModule('worklet.js');
+                    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
+                    const source = audioContext.createMediaStreamSource(mediaStream);
+                    workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+                    
+                    source.connect(workletNode).connect(audioContext.destination);
+
+                    workletNode.port.onmessage = (event) => {
+                        if (websocket && websocket.readyState === WebSocket.OPEN) {
+                            websocket.send(event.data.pcmData);
+                        }
+                        // Update visualizer
+                        const scale = Math.min(1.5, 1 + event.data.volume * 10);
+                        audioVisualizer.style.transform = `scale(${scale})`;
+                    };
+                    workletNode.port.postMessage({ command: 'start' });
+                } catch (error) {
+                    console.error("Error starting audio processing:", error);
+                    updateUI('error', 'Could not access microphone.');
                 }
-                audioContext = null;
+            };
+
+            const stopAudioProcessing = () => {
+                if (workletNode) {
+                    workletNode.port.postMessage({ command: 'stop' });
+                    workletNode.disconnect();
+                    workletNode = null;
+                }
+                if (mediaStream) {
+                    mediaStream.getTracks().forEach(track => track.stop());
+                    mediaStream = null;
+                }
+                if (audioContext && audioContext.state !== 'closed') {
+                    audioContext.close().then(() => audioContext = null);
+                }
+                audioVisualizer.style.transform = 'scale(1)';
+            };
+
+            // --- Recording Control ---
+            const startRecording = async () => {
+                updateUI('connecting');
+                connectWebSocket();
+                await startAudioProcessing();
+            };
+
+            const stopRecording = () => {
+                if (websocket) websocket.close();
+                stopAudioProcessing();
+                updateUI('stopped');
+            };
+
+            // --- UI State Management ---
+            const updateUI = (state, message = '') => {
+                const elementsToDisable = [startButton, stopButton, modelSelect, deviceSelect, languageSelect, uploadButton];
+                elementsToDisable.forEach(el => el.disabled = true);
+
+                switch (state) {
+                    case 'idle':
+                        statusSpan.textContent = 'Idle';
+                        [startButton, modelSelect, deviceSelect, languageSelect, uploadButton].forEach(el => el.disabled = false);
+                        downloadContainer.classList.add('hidden');
+                        break;
+                    case 'connecting':
+                        statusSpan.textContent = 'Connecting...';
+                        break;
+                    case 'connected':
+                        statusSpan.textContent = 'Connected. Start speaking.';
+                        stopButton.disabled = false;
+                        finalTranscriptSpan.textContent = '';
+                        interimTranscriptSpan.textContent = '';
+                        downloadContainer.classList.add('hidden');
+                        break;
+                    case 'stopped':
+                        statusSpan.textContent = 'Recording stopped.';
+                        [startButton, modelSelect, deviceSelect, languageSelect, uploadButton].forEach(el => el.disabled = false);
+                        if (sessionId) {
+                            downloadLink.href = `/download/${sessionId}`;
+                            downloadContainer.classList.remove('hidden');
+                        }
+                        break;
+                    case 'error':
+                        statusSpan.textContent = `Error: ${message}`;
+                        [startButton, modelSelect, deviceSelect, languageSelect, uploadButton].forEach(el => el.disabled = false);
+                        break;
+                }
+            };
+            
+            const scrollToBottom = () => {
+                const container = document.getElementById('transcript-container');
+                container.scrollTop = container.scrollHeight;
+            };
+
+            // --- Toast Notification ---
+            const showToast = (message) => {
+                if (toastTimeout) clearTimeout(toastTimeout);
+                toastMessage.textContent = message;
+                toast.classList.remove('opacity-0', 'invisible');
+                toast.classList.add('opacity-100', 'visible');
+                toastTimeout = setTimeout(() => hideToast(), 3000);
+            };
+
+            const hideToast = () => {
+                toast.classList.remove('opacity-100', 'visible');
+                toast.classList.add('opacity-0', 'invisible');
+            };
+
+            // --- Transcript Management ---
+            copyButton.addEventListener('click', () => {
+                const text = finalTranscriptSpan.textContent.trim();
+                if (!text) return; // Don't copy if there's nothing to copy
+                navigator.clipboard.writeText(text).then(() => {
+                    showToast('Transcript copied!');
+                }).catch(err => {
+                    console.error('Failed to copy transcript: ', err);
+                    showToast('Error: Could not copy.');
+                });
+            });
+
+            downloadTxtButton.addEventListener('click', () => {
+                const text = finalTranscriptSpan.textContent;
+                const blob = new Blob([text], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `transcript_${sessionId || 'session'}.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+            });
+
+            // --- Settings Modal ---
+            const loadSettings = async () => {
+                try {
+                    const response = await fetch('/api/settings');
+                    const settings = await response.json();
+                    // Populate form
+                    const thresholdSlider = document.getElementById('vad_prob_threshold');
+                    const thresholdOutput = document.getElementById('vad_prob_threshold_output');
+                    const silenceDurationInput = document.getElementById('vad_silence_duration');
+                    const minSpeechDurationInput = document.getElementById('vad_min_speech_duration');
+
+                    thresholdSlider.value = settings.vad_parameters.prob_threshold;
+                    thresholdOutput.textContent = parseFloat(thresholdSlider.value).toFixed(2);
+                    silenceDurationInput.value = settings.vad_parameters.silence_duration;
+                    minSpeechDurationInput.value = settings.vad_parameters.min_speech_duration;
+                } catch (error) {
+                    console.error("Failed to load settings:", error);
+                }
+            };
+
+            settingsButton.addEventListener('click', () => settingsModal.classList.remove('hidden'));
+            cancelSettings.addEventListener('click', () => settingsModal.classList.add('hidden'));
+            settingsModal.addEventListener('click', (e) => {
+                if (e.target === settingsModal) settingsModal.classList.add('hidden');
+            });
+
+            settingsForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const formData = new FormData(settingsForm);
+                const settings = {
+                    vad_parameters: {
+                        prob_threshold: parseFloat(formData.get('vad_parameters.prob_threshold')),
+                        silence_duration: parseFloat(formData.get('vad_parameters.silence_duration')),
+                        min_speech_duration: parseFloat(formData.get('vad_parameters.min_speech_duration')),
+                    }
+                };
+                
+                try {
+                    await fetch('/api/settings', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(settings)
+                    });
+                    settingsModal.classList.add('hidden');
+                    showToast('Settings saved!');
+                } catch (error) {
+                    console.error("Failed to save settings:", error);
+                    showToast('Error: Could not save settings.');
+                }
+            });
+            
+            // --- Batch Transcription ---
+            uploadButton.addEventListener('click', async () => {
+                const file = fileUpload.files[0];
+                if (!file) {
+                    alert('Please select a file to upload.');
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('model', modelSelect.value);
+                formData.append('language', languageSelect.value);
+                formData.append('device', deviceSelect.value);
+                
+                try {
+                    const response = await fetch('/api/transcribe', { method: 'POST', body: formData });
+                    const data = await response.json();
+                    addJobToUI(data.job_id, file.name);
+                    pollJobStatus(data.job_id);
+                } catch (error) {
+                    console.error('File upload error:', error);
+                    alert('Failed to start transcription job.');
+                }
+            });
+
+            const addJobToUI = (jobId, fileName) => {
+                const jobElement = document.createElement('div');
+                jobElement.id = `job-${jobId}`;
+                jobElement.className = 'bg-gray-100 p-2 rounded-lg';
+                jobElement.innerHTML = `
+                    <p class="text-sm font-medium truncate">${fileName}</p>
+                    <p class="text-xs text-gray-500">Status: <span class="status">Processing...</span></p>
+                    <div class="result mt-2 text-xs bg-white p-1 rounded hidden"></div>
+                `;
+                jobStatusContainer.prepend(jobElement);
+            };
+
+            const pollJobStatus = (jobId) => {
+                if (activePolls.has(jobId)) return;
+                activePolls.add(jobId);
+                
+                const interval = setInterval(async () => {
+                    try {
+                        const response = await fetch(`/api/transcribe/status/${jobId}`);
+                        const data = await response.json();
+                        const jobElement = document.getElementById(`job-${jobId}`);
+                        
+                        if (response.ok && jobElement) {
+                            const statusSpan = jobElement.querySelector('.status');
+                            if (data.status === 'completed' || data.status === 'error') {
+                                clearInterval(interval);
+                                activePolls.delete(jobId);
+                                statusSpan.textContent = data.status;
+                                const resultDiv = jobElement.querySelector('.result');
+                                resultDiv.textContent = data.result;
+                                resultDiv.classList.remove('hidden');
+                            } else {
+                                statusSpan.textContent = data.status;
+                            }
+                        } else {
+                             clearInterval(interval);
+                             activePolls.delete(jobId);
+                        }
+                    } catch (error) {
+                        console.error(`Error polling job ${jobId}:`, error);
+                        clearInterval(interval);
+                        activePolls.delete(jobId);
+                    }
+                }, 2000);
+            };
+
+            // --- Utility ---
+            function generateUUID() {
+                return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+                    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+                );
             }
-        };
 
-        const startRecording = async () => {
-            updateUI('connecting');
-            connectWebSocket();
-            await startAudioProcessing();
-        };
+            // --- Event Listeners ---
+            startButton.addEventListener('click', startRecording);
+            stopButton.addEventListener('click', stopRecording);
+            toastClose.addEventListener('click', hideToast);
+            
+            document.getElementById('vad_prob_threshold').addEventListener('input', (e) => {
+                document.getElementById('vad_prob_threshold_output').textContent = parseFloat(e.target.value).toFixed(2);
+            });
 
-        const stopRecording = () => {
-            if (websocket) {
-                websocket.close();
-            }
-            stopAudioProcessing(); 
-            updateUI('stopped');
-        };
-
-        const updateUI = (state, message = '') => {
-            switch (state) {
-                case 'idle':
-                    statusSpan.textContent = 'Idle';
-                    startButton.disabled = false;
-                    stopButton.disabled = true;
-                    [modelSelect, deviceSelect].forEach(el => el.disabled = false);
-                    downloadContainer.classList.add('hidden');
-                    break;
-                case 'connecting':
-                    statusSpan.textContent = 'Connecting to server...';
-                    startButton.disabled = true;
-                    stopButton.disabled = true;
-                    break;
-                case 'connected':
-                    statusSpan.textContent = 'Connected. Start speaking.';
-                    startButton.disabled = true;
-                    stopButton.disabled = false;
-                    [modelSelect, deviceSelect].forEach(el => el.disabled = true);
-                    finalTranscriptSpan.textContent = '';
-                    interimTranscriptSpan.textContent = '';
-                    downloadContainer.classList.add('hidden'); // Ensure download link is hidden on new recording
-                    break;
-                case 'stopped':
-                    statusSpan.textContent = 'Recording stopped. Ready to download.';
-                    startButton.disabled = false;
-                    stopButton.disabled = true;
-                    [modelSelect, deviceSelect].forEach(el => el.disabled = false);
-                    downloadLink.href = `/download/${sessionId}`;
-                    downloadContainer.classList.remove('hidden');
-                    break;
-                case 'error':
-                    statusSpan.textContent = `Error: ${message}`;
-                    startButton.disabled = false;
-                    stopButton.disabled = true;
-                    [modelSelect, deviceSelect].forEach(el => el.disabled = false);
-                    break;
-            }
-        };
-
-        function generateUUID() {
-            return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
-                (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
-            );
-        }
-
-        startButton.addEventListener('click', startRecording);
-        stopButton.addEventListener('click', stopRecording);
-        
-        // Initially disable buttons until config is loaded
-        startButton.disabled = true;
-        stopButton.disabled = true;
+            // --- Initial Load ---
+            initialize();
+        });
     </script>
 </body>
 </html>

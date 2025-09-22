@@ -16,6 +16,7 @@ myenv/
 *.onnx
 *.pcm
 *.mp3
+!/tests/transcribe_test.mp3
 
 # IDE/Editor specific files
 .vscode/
