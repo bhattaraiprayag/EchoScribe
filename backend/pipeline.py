@@ -41,6 +41,8 @@ class TranscriptionSession:
         self.results_queue: Queue[Optional[Dict[str, str]]] = Queue()
         self.audio_buffer = bytearray()
         self.utterance_buffer = bytearray()
+        self.last_interim_time = 0
+        self.interim_interval = 1.0
         self.vad_state = {"h": torch.zeros(2, 1, 64), "c": torch.zeros(2, 1, 64)}
         self.is_speaking = False
         self.silence_start_time: Optional[float] = None
@@ -150,17 +152,22 @@ class TranscriptionSession:
                     )
                     self.utterance_buffer.clear()
                 break
+            
             self.temp_file.write(audio_chunk)
             self.audio_buffer.extend(audio_chunk)
+
             while len(self.audio_buffer) >= vad_window_size * audio_sample_width:
                 chunk_to_process_bytes = self.audio_buffer[
                     : vad_window_size * audio_sample_width
                 ]
                 del self.audio_buffer[: vad_window_size * audio_sample_width]
+                
                 audio_int16 = np.frombuffer(chunk_to_process_bytes, dtype=np.int16)
                 audio_float32 = audio_int16.astype(np.float32) / 32768.0
                 audio_tensor = torch.from_numpy(audio_float32)
+                
                 speech_prob = self.vad_model(audio_tensor, vad_sample_rate).item()
+
                 if speech_prob > vad_prob_threshold:
                     self.silence_start_time = None
                     if not self.is_speaking:
@@ -172,10 +179,12 @@ class TranscriptionSession:
                         self.utterance_buffer.extend(chunk_to_process_bytes)
                         if self.silence_start_time is None:
                             self.silence_start_time = time.time()
+                        
                         silence_elapsed = time.time() - self.silence_start_time
                         speech_duration = time.time() - (
                             self.speech_start_time or time.time()
                         )
+
                         if (
                             silence_elapsed > vad_silence_duration
                             and speech_duration > vad_min_speech_duration
@@ -190,8 +199,17 @@ class TranscriptionSession:
                             self.is_speaking = False
                             self.silence_start_time = None
                             self.speech_start_time = None
-                    else:
-                        pass
+
+            if self.is_speaking and self.utterance_buffer:
+                current_time = time.time()
+                if current_time - self.last_interim_time > self.interim_interval:
+                    logger.info(
+                        f"[{self.session_id}] Sending interim utterance for transcription."
+                    )
+                    await self.transcription_queue.put(
+                        {"audio": bytes(self.utterance_buffer), "type": "interim"}
+                    )
+                    self.last_interim_time = current_time
         await self.transcription_queue.put(None)
 
 
@@ -203,8 +221,10 @@ class TranscriptionSession:
         while True:
             task = await self.transcription_queue.get()
             if task is None: break
+            
             audio_bytes = task["audio"]
             task_type = task["type"]
+
             if not audio_bytes:
                 continue
             try:
@@ -218,15 +238,17 @@ class TranscriptionSession:
                     beam_size=5,
                     language=language,
                     initial_prompt=self.transcription_context,
-                    vad_filter=False,      # Redundant; Silero-VAD is superior
+                    vad_filter=False,  # Redundant; Silero-VAD is superior
                 )
                 transcription_text = "".join([seg.text for seg in segments]).strip()
+
                 if transcription_text:
                     logger.info(
-                        f"[{self.session_id}] Transcription: {transcription_text}"
+                        f"[{self.session_id}] Transcription ({task_type}): {transcription_text}"
                     )
-                    result = {"text": transcription_text, "type": "final"}
+                    result = {"text": transcription_text, "type": task_type}
                     await self.results_queue.put(result)
+                    
             except Exception as e:
                 logger.error(
                     f"[{self.session_id}] Error during transcription: {e}",

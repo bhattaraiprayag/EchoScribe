@@ -21,7 +21,6 @@
 </head>
 <body class="bg-gray-100 text-gray-800 flex h-screen">
 
-    <!-- Sidebar for Batch Transcription -->
     <aside class="w-1/4 bg-white p-6 border-r border-gray-200 flex flex-col">
         <h2 class="text-2xl font-bold mb-4">Batch Transcription</h2>
         <div class="border rounded-lg p-4">
@@ -36,7 +35,6 @@
         </div>
     </aside>
 
-    <!-- Main Content -->
     <main class="flex-1 p-8 md:p-12 flex flex-col">
         <div class="flex justify-between items-center mb-6">
             <div>
@@ -48,7 +46,6 @@
             </button>
         </div>
 
-        <!-- Realtime Transcription Panel -->
         <div class="bg-white rounded-xl shadow-lg p-8 w-full flex-1 flex flex-col">
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 bg-gray-50 p-4 rounded-lg">
                 <div>
@@ -93,7 +90,6 @@
         </div>
     </main>
     
-    <!-- Settings Modal -->
     <div id="settings-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden">
         <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-2xl">
             <h2 class="text-2xl font-bold mb-4">Settings</h2>
@@ -126,7 +122,6 @@
         </div>
     </div>
 
-    <!-- Toast Notification -->
     <div id="toast-notification" class="fixed bottom-5 right-5 bg-gray-800 text-white py-2 px-4 rounded-lg shadow-lg flex items-center transition-opacity duration-300 ease-in-out opacity-0 invisible">
         <span id="toast-message"></span>
         <button id="toast-close" class="ml-4 text-gray-400 hover:text-white font-bold">&times;</button>
@@ -134,7 +129,6 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            // --- UI Elements ---
             const startButton = document.getElementById('startButton');
             const stopButton = document.getElementById('stopButton');
             const statusSpan = document.getElementById('status');
@@ -159,12 +153,10 @@
             const toastMessage = document.getElementById('toast-message');
             const toastClose = document.getElementById('toast-close');
 
-            // --- State ---
             let audioContext, workletNode, mediaStream, websocket, sessionId;
             let activePolls = new Set();
             let toastTimeout;
 
-            // --- Initialization ---
             const initialize = async () => {
                 try {
                     const response = await fetch('/api/config');
@@ -195,7 +187,6 @@
                 }
             };
 
-            // --- WebSocket Communication ---
             const connectWebSocket = () => {
                 sessionId = generateUUID();
                 const wsUrl = `ws://${window.location.host}/ws/${sessionId}`;
@@ -214,9 +205,13 @@
 
                 websocket.onmessage = (event) => {
                     const data = JSON.parse(event.data);
+                    
                     if (data.type === 'final') {
+                        interimTranscriptSpan.textContent = '';
                         finalTranscriptSpan.textContent += data.text + ' ';
                         scrollToBottom();
+                    } else if (data.type === 'interim') {
+                        interimTranscriptSpan.textContent = data.text;
                     }
                 };
 
@@ -232,7 +227,6 @@
                 };
             };
 
-            // --- Audio Processing & Visualization ---
             const startAudioProcessing = async () => {
                 if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
@@ -248,7 +242,6 @@
                         if (websocket && websocket.readyState === WebSocket.OPEN) {
                             websocket.send(event.data.pcmData);
                         }
-                        // Update visualizer
                         const scale = Math.min(1.5, 1 + event.data.volume * 10);
                         audioVisualizer.style.transform = `scale(${scale})`;
                     };
@@ -275,7 +268,6 @@
                 audioVisualizer.style.transform = 'scale(1)';
             };
 
-            // --- Recording Control ---
             const startRecording = async () => {
                 updateUI('connecting');
                 connectWebSocket();
@@ -288,7 +280,6 @@
                 updateUI('stopped');
             };
 
-            // --- UI State Management ---
             const updateUI = (state, message = '') => {
                 const elementsToDisable = [startButton, stopButton, modelSelect, deviceSelect, languageSelect, uploadButton];
                 elementsToDisable.forEach(el => el.disabled = true);
@@ -329,7 +320,6 @@
                 container.scrollTop = container.scrollHeight;
             };
 
-            // --- Toast Notification ---
             const showToast = (message) => {
                 if (toastTimeout) clearTimeout(toastTimeout);
                 toastMessage.textContent = message;
@@ -343,7 +333,6 @@
                 toast.classList.add('opacity-0', 'invisible');
             };
 
-            // --- Transcript Management ---
             copyButton.addEventListener('click', () => {
                 const text = finalTranscriptSpan.textContent.trim();
                 if (!text) return;
@@ -366,12 +355,10 @@
                 URL.revokeObjectURL(url);
             });
 
-            // --- Settings Modal ---
             const loadSettings = async () => {
                 try {
                     const response = await fetch('/api/settings');
                     const settings = await response.json();
-                    // Populate form
                     const thresholdSlider = document.getElementById('vad_prob_threshold');
                     const thresholdOutput = document.getElementById('vad_prob_threshold_output');
                     const silenceDurationInput = document.getElementById('vad_silence_duration');
@@ -417,7 +404,6 @@
                 }
             });
 
-            // --- Batch Transcription ---
             uploadButton.addEventListener('click', async () => {
                 const file = fileUpload.files[0];
                 if (!file) {
@@ -488,14 +474,12 @@
                 }, 2000);
             };
 
-            // --- Utility ---
             function generateUUID() {
                 return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
                     (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
                 );
             }
 
-            // --- Event Listeners ---
             startButton.addEventListener('click', startRecording);
             stopButton.addEventListener('click', stopRecording);
             toastClose.addEventListener('click', hideToast);
@@ -504,7 +488,6 @@
                 document.getElementById('vad_prob_threshold_output').textContent = parseFloat(e.target.value).toFixed(2);
             });
 
-            // --- Initial Load ---
             initialize();
         });
     </script>
