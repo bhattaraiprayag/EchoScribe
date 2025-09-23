@@ -1,4 +1,4 @@
-# EchoScribe
+# ✍ EchoScribe
 
 [![Status](https://img.shields.io/badge/status-active-success.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](/LICENSE)
@@ -7,7 +7,7 @@ EchoScribe is a high-performance, self-hosted web application for both **real-ti
 
 The interface allows you to select different Whisper models, choose your compute device (CPU or CUDA-enabled GPU), and fine-tune VAD parameters for optimal performance.
 
-## Demo
+## 🎬 Demo
 Here’s a quick look at how to use EchoScribe's real-time and batch transcription features.
 
 ![EchoScribe Application Demo](demo.gif)
@@ -26,7 +26,7 @@ Here’s a quick look at how to use EchoScribe's real-time and batch transcripti
 -   **📝 Export Transcripts:** Easily copy the transcript or download it as a `.txt` file.
 -   **🌐 Modern UI:** Clean and intuitive interface built with Tailwind CSS.
 
-## ⚙️ How It Works
+## ⚡ How It Works
 
 EchoScribe's architecture is designed for low-latency real-time processing. It uses a multi-stage, asynchronous pipeline on the backend.
 
@@ -107,13 +107,13 @@ The application exposes several RESTful and WebSocket endpoints to power the fro
 | `WEBSOCKET` | `/ws/{session_id}` | Establishes the real-time transcription WebSocket connection. |
 | `GET` | `/download/{session_id}` | Downloads the complete audio recording of a real-time session as an MP3. |
 
-## Getting Started
+## 🏁 Getting Started
 ### ⚠️ Important Compatibility Note
 **Apple Silicon (M1/M2/M3) is NOT supported for GPU acceleration**.
 
 The underlying library `CTranslate2` used by `faster-whisper` does not currently have optimized support for Apple's MPS backend. Attempting to use the `mps` device will result in errors/poor performance. Mac users should select the `cpu` device.
 
-### Prerequisites
+### 🎯 Prerequisites
 - **Python**: Version 3.9+ is recommended.
 - **Git**: To clone the repository.
 - **FFmpeg**: This is a system dependency and must be installed separately.
@@ -195,6 +195,14 @@ The underlying library `CTranslate2` used by `faster-whisper` does not currently
 
     Open your browser and navigate to http://localhost:8000.
 
+### 🧪 Running Tests
+
+To ensure everything is working correctly, you can run the built-in test suite. Make sure test dependencies are installed beforehand!
+
+```sh
+python tests/run_tests.py           # From the root directory
+```
+
 ## 🔧 Configuration
 You can adjust the default application behavior by editing the backend/config.yaml file. This is particularly useful for fine-tuning the Voice Activity Detection (VAD) for your specific microphone or environment.
 
@@ -202,8 +210,8 @@ You can adjust the default application behavior by editing the backend/config.ya
 - `silence_duration`: How many seconds of silence trigger the end of an utterance.
 - `min_speech_duration`: The minimum length of a speech segment to be considered for transcription.
 
-## Contributing
+## 🤝 Contributing
 Contributions are welcome! Please feel free to submit a pull request or open an issue.
 
-## License
+## 📜 License
 This project is licensed under the MIT License.
