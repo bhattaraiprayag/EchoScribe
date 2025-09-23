@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.mypy_cache
 
 # Virtual environment folders (e.g., venv, env)
 venv/
@@ -12,7 +13,7 @@ env/
 myenv/
 
 # Downloaded models and temporary media files
-# Your code downloads/creates these, so they shouldn't be in version control.
+# The code downloads/creates these, so they shouldn't be in version control
 *.onnx
 *.pcm
 *.mp3

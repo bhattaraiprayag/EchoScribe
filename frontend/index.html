@@ -416,7 +416,7 @@
                     showToast('Error: Could not save settings.');
                 }
             });
-            
+
             // --- Batch Transcription ---
             uploadButton.addEventListener('click', async () => {
                 const file = fileUpload.files[0];
@@ -430,7 +430,7 @@
                 formData.append('model', modelSelect.value);
                 formData.append('language', languageSelect.value);
                 formData.append('device', deviceSelect.value);
-                
+
                 try {
                     const response = await fetch('/api/transcribe', { method: 'POST', body: formData });
                     const data = await response.json();
