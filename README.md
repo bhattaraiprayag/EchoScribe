@@ -107,7 +107,7 @@ The application exposes several RESTful and WebSocket endpoints to power the fro
 | `WEBSOCKET` | `/ws/{session_id}` | Establishes the real-time transcription WebSocket connection. |
 | `GET` | `/download/{session_id}` | Downloads the complete audio recording of a real-time session as an MP3. |
 
-## 🛠️ Getting Started
+## Getting Started
 ### ⚠️ Important Compatibility Note
 **Apple Silicon (M1/M2/M3) is NOT supported for GPU acceleration**.
 
@@ -121,7 +121,7 @@ The underlying library `CTranslate2` used by `faster-whisper` does not currently
     - **macOS (with Homebrew)**: `brew install ffmpeg`
     - **Windows**: Download from the [official site](https://ffmpeg.org/download.html) and add the bin directory to your system's PATH.
 
-### Installation
+### 🛠️ Installation
 1. Clone the repository:
 
     ```sh
@@ -145,47 +145,65 @@ The underlying library `CTranslate2` used by `faster-whisper` does not currently
 
     **For Windows/Linux with an NVIDIA GPU (Recommended)**:
     
-    Install PyTorch with CUDA support. The version must be compatible with your NVIDIA driver. The command below is for CUDA 12.1. Check the PyTorch website for the correct command for your setup.
-code
-Bash
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-For CPU-Only Systems (including macOS)
-Install the standard CPU version of PyTorch.
-code
-Bash
-pip3 install torch torchvision torchaudio
-Install project dependencies:
-code
-Bash
-pip install -r requirements.txt
-Download the VAD model:
-The Silero VAD model is required for real-time transcription. Run the following script to download it.
-code
-Bash
-python backend/get_vad.py
-This will download silero_vad.onnx into the current directory. The application expects it to be there.
-Running the Application
-Navigate to the backend directory:
-code
-Bash
-cd backend
-Start the server:
-For development with auto-reloading:
-code
-Bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-For production:
-code
-Bash
-uvicorn main:app --host 0.0.0.0 --port 8000
-Open the web interface:
-Open your browser and navigate to http://localhost:8000.
-🔧 Configuration
+    Install PyTorch with CUDA support. The version must be compatible with your NVIDIA driver. The command below is for CUDA 12.9. Check the PyTorch website for the correct command for your setup.
+    ```sh
+    pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129
+    ```
+
+    **For CPU-Only Systems (including macOS)**:
+    
+    Install the standard CPU version of PyTorch.
+    ```sh
+    pip3 install torch torchvision torchaudio
+    ```
+
+4. **Install project dependencies**:
+    ```sh
+    pip install -r requirements.txt
+    ```
+
+5. **Download the VAD model**:
+    
+    The Silero VAD model is required for real-time transcription. Run the following script to download it.
+
+    ```sh
+    python backend/get_vad.py
+    ```
+    
+    This will download `silero_vad.onnx` into the current directory. The application expects it to be there.
+
+## ▶️ Running the Application
+1. **Navigate to the backend directory**:
+
+    ```sh
+    cd backend
+    ```
+
+2. **Start the server**:
+
+- For development (with auto-reloading):
+
+    ```sh
+    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    ```
+- For production:
+    ```sh
+    uvicorn main:app --host 0.0.0.0 --port 8000
+    ```
+
+3. **Open the web interface**:
+
+    Open your browser and navigate to http://localhost:8000.
+
+## 🔧 Configuration
 You can adjust the default application behavior by editing the backend/config.yaml file. This is particularly useful for fine-tuning the Voice Activity Detection (VAD) for your specific microphone or environment.
-prob_threshold: The probability threshold for speech detection (higher values are stricter).
-silence_duration: How many seconds of silence trigger the end of an utterance.
-min_speech_duration: The minimum length of a speech segment to be considered for transcription.
-Contributing
+
+- `prob_threshold`: The probability threshold for speech detection (higher values are stricter).
+- `silence_duration`: How many seconds of silence trigger the end of an utterance.
+- `min_speech_duration`: The minimum length of a speech segment to be considered for transcription.
+
+## Contributing
 Contributions are welcome! Please feel free to submit a pull request or open an issue.
-License
-This project is licensed under the MIT License. See the LICENSE file for details.
+
+## License
+This project is licensed under the MIT License.
