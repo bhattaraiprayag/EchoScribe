@@ -6,5 +6,5 @@ transcription_parameters:
   context_max_length: 224
 vad_parameters:
   min_speech_duration: 0.1
-  prob_threshold: 0.7
+  prob_threshold: 0.8
   silence_duration: 0.7
