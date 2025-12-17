@@ -160,7 +160,7 @@ class TranscriptionSession:
         """
         model_size = self.config.get("model", "tiny")
         device = self.config.get("device", "cpu")
-        compute_type = "int8" if device == "cpu" else "float16"
+        compute_type = "int8" if device == "cpu" else "int8_float16"
         logger.info(
             f"[{self.session_id}] Loading Whisper model "
             f"'{model_size}' on '{device}'..."

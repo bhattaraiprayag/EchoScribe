@@ -83,3 +83,48 @@ async def test_file_transcription(async_client):
         assert post_response.status_code == 200
         response_json = post_response.json()
         assert "job_id" in response_json
+
+
+async def test_model_status_endpoint(async_client):
+    """Tests the /api/model/status endpoint."""
+    response = await async_client.get("/api/model/status", params={"model": "tiny", "device": "cpu"})
+    assert response.status_code == 200
+    data = response.json()
+    assert "cached" in data
+    assert "model" in data
+    assert "device" in data
+    assert data["model"] == "tiny"
+    assert data["device"] == "cpu"
+
+
+async def test_model_status_unknown_model(async_client):
+    """Tests /api/model/status with unknown model."""
+    response = await async_client.get("/api/model/status", params={"model": "nonexistent-xyz", "device": "cpu"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["cached"] is False
+    assert "error" in data
+
+
+async def test_model_status_includes_repo_id(async_client):
+    """Tests that /api/model/status includes repo_id for known models."""
+    response = await async_client.get("/api/model/status", params={"model": "base", "device": "cuda"})
+    assert response.status_code == 200
+    data = response.json()
+    assert "repo_id" in data
+    assert "Systran" in data["repo_id"]
+
+
+async def test_config_models_order(async_client):
+    """Tests that /api/config returns models in correct order (ascending size)."""
+    response = await async_client.get("/api/config")
+    assert response.status_code == 200
+    config = response.json()
+
+    models = config["models"]
+    # Verify large-v3 is last (largest model)
+    assert models[-1] == "large-v3"
+    # Verify tiny is first (smallest model)
+    assert models[0] == "tiny"
+    # Verify distil-large-v3 comes before large-v3
+    assert models.index("distil-large-v3") < models.index("large-v3")

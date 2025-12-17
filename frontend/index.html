@@ -17,21 +17,38 @@
             50% { transform: scale(1.1); opacity: 1; }
             100% { transform: scale(1); opacity: 0.7; }
         }
+        .progress-bar {
+            height: 6px;
+            background-color: #e5e7eb;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        .progress-bar-fill {
+            height: 100%;
+            background-color: #3b82f6;
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+        .progress-bar-fill.downloading { background-color: #f59e0b; }
+        .progress-bar-fill.loading { background-color: #3b82f6; }
+        .progress-bar-fill.ready { background-color: #10b981; }
     </style>
 </head>
 <body class="bg-gray-100 text-gray-800 flex h-screen">
 
-    <aside class="w-1/4 bg-white p-6 border-r border-gray-200 flex flex-col">
+    <aside class="w-2/5 bg-white p-6 border-r border-gray-200 flex flex-col">
         <h2 class="text-2xl font-bold mb-4">Batch Transcription</h2>
         <div class="border rounded-lg p-4">
-            <label for="file-upload" class="block text-sm font-medium text-gray-700 mb-2">Upload Audio File</label>
-            <input id="file-upload" type="file" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+            <label for="file-upload" class="block text-sm font-medium text-gray-700 mb-2">Upload Audio Files</label>
+            <input id="file-upload" type="file" multiple accept="audio/*,video/*" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+            <p id="files-selected" class="text-xs text-gray-500 mt-1"></p>
             <button id="upload-button" class="mt-4 w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition-all duration-300 ease-in-out disabled:bg-gray-400">
                 Start Transcription
             </button>
         </div>
-        <h3 class="text-lg font-semibold mt-6 mb-2">Job Status</h3>
-        <div id="job-status-container" class="space-y-2 overflow-y-auto">
+        <h3 class="text-lg font-semibold mt-6 mb-2">Job Queue</h3>
+        <div id="job-status-container" class="space-y-3 overflow-y-auto flex-1">
         </div>
     </aside>
 
@@ -69,6 +86,12 @@
             </div>
             <div class="text-center mb-6">
                 <p class="text-lg text-gray-700"><strong>Status:</strong> <span id="status">Loading...</span></p>
+                <div id="progress-container" class="max-w-md mx-auto hidden">
+                    <div class="progress-bar">
+                        <div id="progress-bar-fill" class="progress-bar-fill" style="width: 0%"></div>
+                    </div>
+                    <p id="progress-text" class="text-xs text-gray-500 mt-1"></p>
+                </div>
             </div>
 
             <div class="w-full bg-gray-50 rounded-lg p-4 border border-gray-200 flex-1 overflow-y-auto">
@@ -159,6 +182,10 @@
             let audioContext, workletNode, mediaStream, websocket, sessionId;
             let activePolls = new Set();
             let toastTimeout;
+            let isModelLoading = false;  // Track if model is being loaded/downloaded
+            const progressContainer = document.getElementById('progress-container');
+            const progressBarFill = document.getElementById('progress-bar-fill');
+            const progressText = document.getElementById('progress-text');
 
             const initialize = async () => {
                 try {
@@ -248,7 +275,8 @@
                 websocket.onopen = () => {
                     console.log("WebSocket connection established.");
                     reconnectAttempts = 0; // Reset on successful connection
-                    updateUI('connected');
+                    isModelLoading = true;  // Will be set to false when 'ready' status received
+                    updateUI('connecting');
                     const config = {
                         model: modelSelect.value,
                         device: deviceSelect.value,
@@ -259,6 +287,12 @@
 
                 websocket.onmessage = (event) => {
                     const data = JSON.parse(event.data);
+
+                    // Handle status messages from server
+                    if (data.type === 'status') {
+                        handleStatusMessage(data);
+                        return;
+                    }
 
                     if (data.type === 'final') {
                         interimTranscriptSpan.textContent = '';
@@ -276,12 +310,68 @@
                     }
                 };
 
+                // Handle status messages from server
+                const handleStatusMessage = (data) => {
+                    const { status, message, progress } = data;
+                    console.log(`Status update: ${status} - ${message} (${Math.round(progress * 100)}%)`);
+
+                    switch (status) {
+                        case 'checking':
+                        case 'downloading':
+                            isModelLoading = true;
+                            statusSpan.textContent = message;
+                            progressContainer.classList.remove('hidden');
+                            progressBarFill.style.width = `${progress * 100}%`;
+                            progressBarFill.className = 'progress-bar-fill downloading';
+                            progressText.textContent = `${Math.round(progress * 100)}% complete`;
+                            break;
+
+                        case 'loading':
+                            isModelLoading = true;
+                            statusSpan.textContent = message;
+                            progressContainer.classList.remove('hidden');
+                            progressBarFill.style.width = `${progress * 100}%`;
+                            progressBarFill.className = 'progress-bar-fill loading';
+                            progressText.textContent = 'Loading model...';
+                            break;
+
+                        case 'ready':
+                            isModelLoading = false;
+                            statusSpan.textContent = message;
+                            progressContainer.classList.add('hidden');
+                            progressBarFill.style.width = '100%';
+                            progressBarFill.className = 'progress-bar-fill ready';
+                            // Enable recording now that model is ready
+                            stopButton.disabled = false;
+                            break;
+
+                        case 'error':
+                            isModelLoading = false;
+                            statusSpan.textContent = `Error: ${message}`;
+                            progressContainer.classList.add('hidden');
+                            updateUI('error', message);
+                            break;
+                    }
+                };
+
                 websocket.onclose = (event) => {
                     console.log("WebSocket connection closed.", event.code, event.reason);
 
                     // Server shutdown (1001) or intentional close - don't reconnect
                     if (event.code === 1001 || isIntentionalDisconnect) {
+                        isModelLoading = false;
+                        progressContainer.classList.add('hidden');
                         stopAudioProcessing(true);
+                        return;
+                    }
+
+                    // Don't reconnect if model is still loading - connection is working, just slow
+                    if (isModelLoading) {
+                        console.log("Connection closed during model loading - not reconnecting to avoid loop");
+                        isModelLoading = false;
+                        progressContainer.classList.add('hidden');
+                        updateUI('error', 'Connection lost during model loading. Please try again.');
+                        stopAudioProcessing(false);
                         return;
                     }
 
@@ -332,6 +422,10 @@
                     isIntentionalDisconnect = true;
                     cancelReconnect();
                 }
+
+                // Reset model loading state
+                isModelLoading = false;
+                progressContainer.classList.add('hidden');
 
                 if (workletNode) {
                     workletNode.port.postMessage({ command: 'stop' });
@@ -406,21 +500,25 @@
                 switch (state) {
                     case 'idle':
                         statusSpan.textContent = 'Idle';
+                        progressContainer.classList.add('hidden');
                         [startButton, modelSelect, deviceSelect, languageSelect, uploadButton].forEach(el => el.disabled = false);
                         downloadContainer.classList.add('hidden');
                         break;
                     case 'connecting':
                         statusSpan.textContent = 'Connecting...';
-                        break;
-                    case 'connected':
-                        statusSpan.textContent = 'Connected. Start speaking.';
-                        stopButton.disabled = false;
                         finalTranscriptSpan.textContent = '';
                         interimTranscriptSpan.textContent = '';
                         downloadContainer.classList.add('hidden');
+                        stopButton.disabled = false; // Allow cancel during connecting
+                        break;
+                    case 'connected':
+                        // This state is now handled by 'ready' status message
+                        statusSpan.textContent = 'Connected. Start speaking.';
+                        stopButton.disabled = false;
                         break;
                     case 'stopped':
                         statusSpan.textContent = 'Recording stopped.';
+                        progressContainer.classList.add('hidden');
                         [startButton, modelSelect, deviceSelect, languageSelect, uploadButton].forEach(el => el.disabled = false);
                         if (sessionId) {
                             downloadLink.href = `/download/${sessionId}`;
@@ -433,6 +531,7 @@
                         break;
                     case 'error':
                         statusSpan.textContent = `Error: ${message}`;
+                        progressContainer.classList.add('hidden');
                         [startButton, modelSelect, deviceSelect, languageSelect, uploadButton].forEach(el => el.disabled = false);
                         break;
                 }
@@ -527,111 +626,310 @@
                 }
             });
 
-            uploadButton.addEventListener('click', async () => {
-                const file = fileUpload.files[0];
-                if (!file) {
-                    alert('Please select a file to upload.');
-                    return;
+            const filesSelectedText = document.getElementById('files-selected');
+            let batchQueue = [];  // Queue of {file, queueId, duration} objects
+            let isProcessingBatch = false;
+            let queueIdCounter = 0;
+
+            // Get audio/video duration using Web Audio API or HTML5 video element
+            const getMediaDuration = (file) => {
+                return new Promise((resolve) => {
+                    const url = URL.createObjectURL(file);
+
+                    // Try video element first (works for both audio and video)
+                    const media = document.createElement('video');
+                    media.preload = 'metadata';
+
+                    media.onloadedmetadata = () => {
+                        URL.revokeObjectURL(url);
+                        resolve(media.duration);
+                    };
+
+                    media.onerror = () => {
+                        URL.revokeObjectURL(url);
+                        resolve(null);  // Could not determine duration
+                    };
+
+                    media.src = url;
+                });
+            };
+
+            // Format duration in MM:SS or HH:MM:SS
+            const formatDuration = (seconds) => {
+                if (!seconds || isNaN(seconds)) return '';
+                const hrs = Math.floor(seconds / 3600);
+                const mins = Math.floor((seconds % 3600) / 60);
+                const secs = Math.floor(seconds % 60);
+                if (hrs > 0) {
+                    return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
                 }
+                return `${mins}:${secs.toString().padStart(2, '0')}`;
+            };
 
-                const formData = new FormData();
-                formData.append('file', file);
-                formData.append('model', modelSelect.value);
-                formData.append('language', languageSelect.value);
-                formData.append('device', deviceSelect.value);
-
-                try {
-                    const response = await fetch('/api/transcribe', { method: 'POST', body: formData });
-                    const data = await response.json();
-                    addJobToUI(data.job_id, file.name);
-                    pollJobStatus(data.job_id);
-                } catch (error) {
-                    console.error('File upload error:', error);
-                    alert('Failed to start transcription job.');
+            // Show file count when files are selected
+            fileUpload.addEventListener('change', () => {
+                const count = fileUpload.files.length;
+                if (count === 0) {
+                    filesSelectedText.textContent = '';
+                } else if (count === 1) {
+                    filesSelectedText.textContent = `1 file selected: ${fileUpload.files[0].name}`;
+                } else {
+                    filesSelectedText.textContent = `${count} files selected`;
                 }
             });
 
-            const addJobToUI = (jobId, fileName) => {
+            // Add a queued item to the UI (before upload)
+            const addQueuedItemToUI = (queueId, fileName, duration) => {
+                const durationStr = formatDuration(duration);
                 const jobElement = document.createElement('div');
-                jobElement.id = `job-${jobId}`;
-                jobElement.className = 'bg-gray-100 p-2 rounded-lg';
+                jobElement.id = `queue-${queueId}`;
+                jobElement.className = 'bg-gray-50 p-3 rounded-lg border border-gray-200';
                 jobElement.innerHTML = `
-                    <div class="flex justify-between items-start">
+                    <div class="flex justify-between items-start mb-2">
                         <div class="flex-1 min-w-0">
-                            <p class="text-sm font-medium truncate">${fileName}</p>
-                            <p class="text-xs text-gray-500">Status: <span class="status">Processing...</span></p>
+                            <div class="flex items-center gap-2">
+                                <p class="text-sm font-medium truncate" title="${fileName}">${fileName}</p>
+                                ${durationStr ? `<span class="text-xs text-gray-400 whitespace-nowrap">(${durationStr})</span>` : ''}
+                            </div>
+                            <p class="text-xs text-gray-500">Status: <span class="status">In queue...</span></p>
                         </div>
-                        <button class="cancel-btn ml-2 text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded hover:bg-red-50" data-job-id="${jobId}">Cancel</button>
+                        <button class="remove-btn ml-2 text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded hover:bg-red-50">Remove</button>
                     </div>
-                    <div class="result mt-2 text-xs bg-white p-1 rounded hidden"></div>
+                    <div class="result mt-2 text-xs bg-white p-2 rounded border hidden max-h-32 overflow-y-auto"></div>
+                    <div class="action-buttons mt-2 hidden">
+                        <div class="flex space-x-1">
+                            <button class="copy-btn px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs hover:bg-gray-300" title="Copy">
+                                <i class="fas fa-copy"></i> Copy
+                            </button>
+                            <button class="download-btn px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs hover:bg-gray-300" title="Download .txt">
+                                <i class="fas fa-download"></i> .txt
+                            </button>
+                            <button class="edit-btn px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs hover:bg-gray-300" title="Edit">
+                                <i class="fas fa-edit"></i> Edit
+                            </button>
+                        </div>
+                    </div>
                 `;
 
-                // Add cancel button handler
-                const cancelBtn = jobElement.querySelector('.cancel-btn');
-                cancelBtn.addEventListener('click', async () => {
-                    try {
-                        const response = await fetch(`/api/transcribe/${jobId}`, { method: 'DELETE' });
-                        if (response.ok) {
-                            showToast('Cancellation requested');
-                        } else {
-                            const data = await response.json();
-                            showToast(data.error || 'Failed to cancel job');
-                        }
-                    } catch (error) {
-                        console.error('Cancel error:', error);
-                        showToast('Failed to cancel job');
+                // Add remove button handler (for items still in queue)
+                const removeBtn = jobElement.querySelector('.remove-btn');
+                removeBtn.addEventListener('click', () => {
+                    // Remove from queue
+                    const idx = batchQueue.findIndex(item => item.queueId === queueId);
+                    if (idx !== -1) {
+                        batchQueue.splice(idx, 1);
+                    }
+                    // Remove from UI
+                    jobElement.remove();
+                    showToast('Removed from queue');
+                });
+
+                // Add copy button handler
+                const copyBtn = jobElement.querySelector('.copy-btn');
+                copyBtn.addEventListener('click', () => {
+                    const resultDiv = jobElement.querySelector('.result');
+                    const text = resultDiv.textContent.trim();
+                    if (text) {
+                        navigator.clipboard.writeText(text).then(() => {
+                            showToast('Copied to clipboard!');
+                        }).catch(() => {
+                            showToast('Failed to copy');
+                        });
                     }
                 });
 
-                jobStatusContainer.prepend(jobElement);
+                // Add download button handler
+                const downloadBtn = jobElement.querySelector('.download-btn');
+                downloadBtn.addEventListener('click', () => {
+                    const resultDiv = jobElement.querySelector('.result');
+                    const text = resultDiv.textContent.trim();
+                    if (text) {
+                        const blob = new Blob([text], { type: 'text/plain' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `${fileName.replace(/\.[^/.]+$/, '')}_transcript.txt`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                    }
+                });
+
+                // Add edit button handler
+                const editBtn = jobElement.querySelector('.edit-btn');
+                editBtn.addEventListener('click', () => {
+                    const resultDiv = jobElement.querySelector('.result');
+                    if (resultDiv.contentEditable === 'true') {
+                        resultDiv.contentEditable = 'false';
+                        resultDiv.classList.remove('border-blue-300', 'bg-blue-50');
+                        editBtn.innerHTML = '<i class="fas fa-edit"></i> Edit';
+                    } else {
+                        resultDiv.contentEditable = 'true';
+                        resultDiv.classList.add('border-blue-300', 'bg-blue-50');
+                        resultDiv.focus();
+                        editBtn.innerHTML = '<i class="fas fa-check"></i> Done';
+                    }
+                });
+
+                jobStatusContainer.appendChild(jobElement);
+                return jobElement;
             };
 
-            const pollJobStatus = (jobId) => {
-                if (activePolls.has(jobId)) return;
-                activePolls.add(jobId);
+            // Process batch queue - one file at a time
+            const processBatchQueue = async () => {
+                if (isProcessingBatch || batchQueue.length === 0) return;
+                isProcessingBatch = true;
 
-                const interval = setInterval(async () => {
+                while (batchQueue.length > 0) {
+                    const item = batchQueue[0];  // Get first item but don't remove yet
+                    const { file, queueId, fileName } = item;
+                    const jobElement = document.getElementById(`queue-${queueId}`);
+
+                    if (!jobElement) {
+                        // Item was removed from queue
+                        batchQueue.shift();
+                        continue;
+                    }
+
+                    // Update status to Processing
+                    const statusSpan = jobElement.querySelector('.status');
+                    statusSpan.textContent = 'Processing...';
+                    statusSpan.className = 'status text-blue-600 font-medium';
+
+                    // Change Remove button to Cancel
+                    const removeBtn = jobElement.querySelector('.remove-btn');
+                    removeBtn.textContent = 'Cancel';
+                    removeBtn.className = 'cancel-btn ml-2 text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded hover:bg-red-50';
+
+                    // Upload and process the file
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('model', modelSelect.value);
+                    formData.append('language', languageSelect.value);
+                    formData.append('device', deviceSelect.value);
+
                     try {
-                        const response = await fetch(`/api/transcribe/status/${jobId}`);
+                        const response = await fetch('/api/transcribe', { method: 'POST', body: formData });
                         const data = await response.json();
-                        const jobElement = document.getElementById(`job-${jobId}`);
 
-                        if (response.ok && jobElement) {
-                            const statusSpan = jobElement.querySelector('.status');
-                            const cancelBtn = jobElement.querySelector('.cancel-btn');
+                        // Store job_id on element for cancel functionality
+                        jobElement.dataset.jobId = data.job_id;
 
-                            if (data.status === 'completed' || data.status === 'error' || data.status === 'cancelled') {
-                                clearInterval(interval);
-                                activePolls.delete(jobId);
-                                statusSpan.textContent = data.status;
-
-                                // Hide cancel button for finished jobs
-                                if (cancelBtn) {
-                                    cancelBtn.classList.add('hidden');
+                        // Update cancel button handler with job_id
+                        const cancelBtn = jobElement.querySelector('.cancel-btn');
+                        cancelBtn.onclick = async () => {
+                            try {
+                                const resp = await fetch(`/api/transcribe/${data.job_id}`, { method: 'DELETE' });
+                                if (resp.ok) {
+                                    showToast('Cancellation requested');
+                                } else {
+                                    const d = await resp.json();
+                                    showToast(d.error || 'Failed to cancel job');
                                 }
+                            } catch (err) {
+                                console.error('Cancel error:', err);
+                                showToast('Failed to cancel job');
+                            }
+                        };
 
-                                const resultDiv = jobElement.querySelector('.result');
-                                resultDiv.textContent = data.result || (data.status === 'cancelled' ? 'Job was cancelled' : '');
-                                resultDiv.classList.remove('hidden');
+                        // Wait for job completion
+                        await waitForJobCompletion(data.job_id, jobElement, fileName);
 
-                                // Style cancelled jobs differently
-                                if (data.status === 'cancelled') {
-                                    jobElement.classList.add('opacity-50');
+                    } catch (error) {
+                        console.error('File upload error:', error);
+                        statusSpan.textContent = 'Upload failed';
+                        statusSpan.className = 'status text-red-600';
+                        showToast(`Failed to upload: ${fileName}`);
+                    }
+
+                    // Remove from queue after processing
+                    batchQueue.shift();
+                }
+
+                isProcessingBatch = false;
+            };
+
+            // Wait for a job to complete before processing next
+            const waitForJobCompletion = (jobId, jobElement, fileName) => {
+                return new Promise((resolve) => {
+                    const interval = setInterval(async () => {
+                        try {
+                            const response = await fetch(`/api/transcribe/status/${jobId}`);
+                            const data = await response.json();
+
+                            if (response.ok) {
+                                const statusSpan = jobElement.querySelector('.status');
+                                const cancelBtn = jobElement.querySelector('.cancel-btn');
+                                const actionButtons = jobElement.querySelector('.action-buttons');
+
+                                if (data.status === 'completed' || data.status === 'error' || data.status === 'cancelled') {
+                                    clearInterval(interval);
+
+                                    statusSpan.textContent = data.status === 'completed' ? 'Completed' : data.status;
+                                    statusSpan.className = data.status === 'completed' ? 'status text-green-600' :
+                                                          data.status === 'cancelled' ? 'status text-gray-500' : 'status text-red-600';
+
+                                    // Hide cancel button
+                                    if (cancelBtn) cancelBtn.classList.add('hidden');
+
+                                    // Show result
+                                    const resultDiv = jobElement.querySelector('.result');
+                                    resultDiv.textContent = data.result || (data.status === 'cancelled' ? 'Job was cancelled' : 'No result');
+                                    resultDiv.classList.remove('hidden');
+
+                                    // Show action buttons for completed jobs
+                                    if (data.status === 'completed' && actionButtons) {
+                                        actionButtons.classList.remove('hidden');
+                                    }
+
+                                    // Style cancelled/error jobs
+                                    if (data.status === 'cancelled' || data.status === 'error') {
+                                        jobElement.classList.add('opacity-60');
+                                    }
+
+                                    resolve();
+                                } else {
+                                    // Still processing
+                                    statusSpan.textContent = data.status || 'Processing...';
                                 }
                             } else {
-                                statusSpan.textContent = data.status;
+                                clearInterval(interval);
+                                resolve();
                             }
-                        } else {
-                             clearInterval(interval);
-                             activePolls.delete(jobId);
+                        } catch (error) {
+                            console.error(`Error polling job ${jobId}:`, error);
+                            clearInterval(interval);
+                            resolve();
                         }
-                    } catch (error) {
-                        console.error(`Error polling job ${jobId}:`, error);
-                        clearInterval(interval);
-                        activePolls.delete(jobId);
-                    }
-                }, 2000);
+                    }, 1500);
+                });
             };
+
+            uploadButton.addEventListener('click', async () => {
+                const files = fileUpload.files;
+                if (!files || files.length === 0) {
+                    alert('Please select at least one file to upload.');
+                    return;
+                }
+
+                // Add all files to queue UI with duration
+                for (const file of files) {
+                    const queueId = ++queueIdCounter;
+                    const duration = await getMediaDuration(file);
+
+                    // Add to queue
+                    batchQueue.push({ file, queueId, fileName: file.name, duration });
+
+                    // Add to UI
+                    addQueuedItemToUI(queueId, file.name, duration);
+                }
+
+                // Clear file input
+                fileUpload.value = '';
+                filesSelectedText.textContent = '';
+
+                // Start processing queue
+                processBatchQueue();
+            });
 
             function generateUUID() {
                 return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>

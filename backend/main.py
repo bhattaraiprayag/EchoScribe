@@ -26,8 +26,10 @@ from utils import (
     ALLOWED_AUDIO_EXTENSIONS,
     MAX_FILE_SIZE,
     VAD_CACHE_DIR,
+    get_model_status,
     get_whisper_model,
     get_whisper_model_sync,
+    is_model_cached,
     is_valid_audio_extension,
     sanitize_filename,
 )
@@ -454,8 +456,8 @@ def get_available_config() -> JSONResponse:
         "base",
         "small",
         "medium",
-        "large-v3",
         "distil-large-v3",
+        "large-v3",
     ]
     languages = {
         "en": "English",
@@ -474,6 +476,23 @@ def get_available_config() -> JSONResponse:
     )
 
 
+@app.get("/api/model/status")
+def check_model_status(model: str, device: str = "cpu") -> JSONResponse:
+    """Check if a model is cached and ready to use.
+
+    Args:
+        model: Whisper model name (e.g., 'tiny', 'base', 'large-v3').
+        device: Compute device (cpu, cuda, mps).
+
+    Returns:
+        JSON response with model cache status.
+    """
+    status = get_model_status(model)
+    status["device"] = device
+    status["model"] = model
+    return JSONResponse(content=status)
+
+
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     """WebSocket endpoint for real-time transcription.
@@ -489,12 +508,52 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
 
     session = None
     session_info = None
+
+    # Create async-safe progress callback for WebSocket status updates
+    async def send_status(status: str, message: str, progress: float):
+        """Send status update over WebSocket."""
+        try:
+            await websocket.send_json({
+                "type": "status",
+                "status": status,
+                "message": message,
+                "progress": progress
+            })
+        except Exception as e:
+            logger.warning(f"[{session_id}] Failed to send status: {e}")
+
+    # Sync wrapper for progress callback (called from sync download code)
+    def progress_callback(status: str, message: str, progress: float):
+        """Sync wrapper to schedule async status send."""
+        try:
+            # Use asyncio.run_coroutine_threadsafe for thread-safe async call
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    send_status(status, message, progress),
+                    loop
+                )
+        except Exception as e:
+            logger.warning(f"[{session_id}] Progress callback error: {e}")
+
     try:
         client_config = await websocket.receive_json()
         logger.info(f"[{session_id}] Received configuration: {client_config}")
         model_size = client_config.get("model", "tiny")
         device = client_config.get("device", "cpu")
-        whisper_model = await get_whisper_model(model_size, device)
+
+        # Check if model is cached and send appropriate initial status
+        if is_model_cached(model_size):
+            await send_status("loading", f"Loading {model_size} on {device}...", 0.3)
+        else:
+            await send_status("downloading", f"Model not found. Downloading {model_size}...", 0)
+
+        # Load model with progress updates
+        whisper_model = await get_whisper_model(model_size, device, progress_callback)
+
+        # Send ready status before starting pipeline
+        await send_status("ready", "Connected. Start speaking.", 1.0)
+
         session = TranscriptionSession(
             session_id, websocket, client_config, whisper_model
         )
@@ -508,6 +567,16 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             f"[{session_id}] Error in WebSocket endpoint: {e}",
             exc_info=True
         )
+        # Try to send error status
+        try:
+            await websocket.send_json({
+                "type": "status",
+                "status": "error",
+                "message": str(e),
+                "progress": 0
+            })
+        except Exception:
+            pass
     finally:
         active_websockets.pop(session_id, None)
 
