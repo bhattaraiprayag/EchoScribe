@@ -12,6 +12,7 @@ def download_silero_vad() -> None:
             model="silero_vad",
             force_reload=True,
             onnx=True,
+            trust_repo=True
         )
         print("Model downloaded successfully as 'silero_vad.onnx'.")
     except Exception as e:
