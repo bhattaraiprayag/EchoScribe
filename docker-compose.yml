@@ -1,0 +1,32 @@
+services:
+  echoscribe:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: echoscribe
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persistent model cache - models stored on host
+      - ./models_cache:/app/models_cache
+      # Optional: Mount config for easy updates without rebuild
+      - ./backend/config.yaml:/app/backend/config.yaml
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Optional: Set CUDA visible devices
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/config', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

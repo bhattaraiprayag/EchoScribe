@@ -18,6 +18,7 @@ myenv/
 *.pcm
 *.mp3
 !/tests/transcribe_test.mp3
+models_cache/
 
 # IDE/Editor specific files
 .vscode/
@@ -29,3 +30,7 @@ Thumbs.db
 
 # Log files
 *.log
+
+# Claude artefacts
+CLAUDE.md
+.claude/

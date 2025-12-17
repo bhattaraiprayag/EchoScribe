@@ -2,9 +2,23 @@ audio_parameters:
   channels: 1
   sample_rate: 16000
   sample_width: 2
+auth:
+  api_key: ''
+  enabled: false
+cleanup_parameters:
+  cleanup_interval_seconds: 300
+  job_retention_minutes: 120
+  session_ttl_minutes: 60
+preload_models:
+  device: cpu
+  enabled: false
+  models: []
 transcription_parameters:
   context_max_length: 224
+  word_timestamps: false
 vad_parameters:
+  batch_min_duration: 1.0
+  batch_short_utterances: true
   min_speech_duration: 0.3
-  prob_threshold: 0.85
-  silence_duration: 0.5
+  prob_threshold: 0.6
+  silence_duration: 0.7

@@ -64,7 +64,7 @@
 
             <div class="flex items-center justify-center space-x-6 mb-6">
                 <button id="startButton" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105 disabled:bg-gray-400">Start Recording</button>
-                <div id="audio-visualizer" class="w-10 h-10 bg-green-500 rounded-full transition-transform duration-100 ease-in-out"></div>
+                <canvas id="waveform-canvas" width="120" height="40" class="bg-gray-200 rounded-lg"></canvas>
                 <button id="stopButton" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105 disabled:bg-gray-400" disabled>Stop Recording</button>
             </div>
             <div class="text-center mb-6">
@@ -74,14 +74,16 @@
             <div class="w-full bg-gray-50 rounded-lg p-4 border border-gray-200 flex-1 overflow-y-auto">
                 <div class="flex justify-between items-center mb-2">
                     <h2 class="text-xl font-semibold text-gray-800">Transcript</h2>
-                    <div>
+                    <div class="flex space-x-2">
                         <button id="copy-button" class="px-3 py-1 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Copy</button>
                         <button id="download-txt-button" class="px-3 py-1 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Download .txt</button>
+                        <button id="edit-button" class="px-3 py-1 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Edit</button>
                     </div>
                 </div>
                 <div id="transcript-container" class="text-left text-gray-800 whitespace-pre-wrap">
                     <span id="final-transcript"></span><span id="interim-transcript"></span>
                 </div>
+                <div id="edit-hint" class="text-xs text-gray-500 mt-1 hidden">Editing mode active. Click outside or press Escape to exit.</div>
             </div>
             
             <div id="download-container" class="text-center mt-6 hidden">
@@ -139,7 +141,8 @@
             const modelSelect = document.getElementById('model-select');
             const deviceSelect = document.getElementById('device-select');
             const languageSelect = document.getElementById('language-select');
-            const audioVisualizer = document.getElementById('audio-visualizer');
+            const waveformCanvas = document.getElementById('waveform-canvas');
+            const waveformCtx = waveformCanvas.getContext('2d');
             const copyButton = document.getElementById('copy-button');
             const downloadTxtButton = document.getElementById('download-txt-button');
             const settingsButton = document.getElementById('settings-button');
@@ -187,13 +190,64 @@
                 }
             };
 
-            const connectWebSocket = () => {
-                sessionId = generateUUID();
-                const wsUrl = `ws://${window.location.host}/ws/${sessionId}`;
+            // Reconnection state
+            let reconnectAttempts = 0;
+            const maxReconnectAttempts = 5;
+            const baseReconnectDelay = 1000; // 1 second
+            const maxReconnectDelay = 30000; // 30 seconds
+            let reconnectTimeout = null;
+            let isIntentionalDisconnect = false;
+
+            const getReconnectDelay = () => {
+                // Exponential backoff with jitter
+                const delay = Math.min(
+                    maxReconnectDelay,
+                    baseReconnectDelay * Math.pow(2, reconnectAttempts)
+                );
+                return delay + Math.random() * 1000; // Add up to 1s jitter
+            };
+
+            const attemptReconnect = () => {
+                if (isIntentionalDisconnect || reconnectAttempts >= maxReconnectAttempts) {
+                    if (reconnectAttempts >= maxReconnectAttempts) {
+                        updateUI('error', 'Connection lost. Please refresh to try again.');
+                    }
+                    return;
+                }
+
+                reconnectAttempts++;
+                const delay = getReconnectDelay();
+                console.log(`Attempting reconnection ${reconnectAttempts}/${maxReconnectAttempts} in ${Math.round(delay)}ms...`);
+                updateUI('reconnecting', `Reconnecting (${reconnectAttempts}/${maxReconnectAttempts})...`);
+
+                reconnectTimeout = setTimeout(() => {
+                    connectWebSocket(true); // Pass true to indicate reconnection
+                }, delay);
+            };
+
+            const cancelReconnect = () => {
+                if (reconnectTimeout) {
+                    clearTimeout(reconnectTimeout);
+                    reconnectTimeout = null;
+                }
+                reconnectAttempts = 0;
+            };
+
+            const connectWebSocket = (isReconnect = false) => {
+                if (!isReconnect) {
+                    sessionId = generateUUID();
+                    reconnectAttempts = 0;
+                    isIntentionalDisconnect = false;
+                }
+
+                // Dynamically determine WebSocket protocol based on page protocol
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${wsProtocol}//${window.location.host}/ws/${sessionId}`;
                 websocket = new WebSocket(wsUrl);
 
                 websocket.onopen = () => {
                     console.log("WebSocket connection established.");
+                    reconnectAttempts = 0; // Reset on successful connection
                     updateUI('connected');
                     const config = {
                         model: modelSelect.value,
@@ -205,25 +259,43 @@
 
                 websocket.onmessage = (event) => {
                     const data = JSON.parse(event.data);
-                    
+
                     if (data.type === 'final') {
                         interimTranscriptSpan.textContent = '';
-                        finalTranscriptSpan.textContent += data.text + ' ';
+                        // Format timestamp if available
+                        const timestamp = data.start !== undefined ? `[${formatTime(data.start)}] ` : '';
+                        finalTranscriptSpan.textContent += timestamp + data.text + ' ';
                         scrollToBottom();
                     } else if (data.type === 'interim') {
                         interimTranscriptSpan.textContent = data.text;
+                    } else if (data.type === 'word') {
+                        // Word-level streaming: append word to interim area for real-time display
+                        const currentInterim = interimTranscriptSpan.textContent;
+                        interimTranscriptSpan.textContent = currentInterim + data.text + ' ';
+                        scrollToBottom();
                     }
                 };
 
-                websocket.onclose = () => {
-                    console.log("WebSocket connection closed.");
-                    stopAudioProcessing();
+                websocket.onclose = (event) => {
+                    console.log("WebSocket connection closed.", event.code, event.reason);
+
+                    // Server shutdown (1001) or intentional close - don't reconnect
+                    if (event.code === 1001 || isIntentionalDisconnect) {
+                        stopAudioProcessing(true);
+                        return;
+                    }
+
+                    // Unexpected close - attempt reconnect if we were recording
+                    if (workletNode && !isIntentionalDisconnect) {
+                        attemptReconnect();
+                    } else {
+                        stopAudioProcessing(false);
+                    }
                 };
 
                 websocket.onerror = (error) => {
                     console.error("WebSocket error:", error);
-                    updateUI('error', 'WebSocket connection error.');
-                    stopAudioProcessing();
+                    // Don't update UI here - let onclose handle it
                 };
             };
 
@@ -242,8 +314,10 @@
                         if (websocket && websocket.readyState === WebSocket.OPEN) {
                             websocket.send(event.data.pcmData);
                         }
-                        const scale = Math.min(1.5, 1 + event.data.volume * 10);
-                        audioVisualizer.style.transform = `scale(${scale})`;
+                        // Draw waveform visualization
+                        if (event.data.waveform) {
+                            drawWaveform(event.data.waveform, event.data.volume);
+                        }
                     };
                     workletNode.port.postMessage({ command: 'start' });
                 } catch (error) {
@@ -252,7 +326,13 @@
                 }
             };
 
-            const stopAudioProcessing = () => {
+            const stopAudioProcessing = (intentional = true) => {
+                // Mark as intentional to prevent reconnection attempts
+                if (intentional) {
+                    isIntentionalDisconnect = true;
+                    cancelReconnect();
+                }
+
                 if (workletNode) {
                     workletNode.port.postMessage({ command: 'stop' });
                     workletNode.disconnect();
@@ -265,7 +345,46 @@
                 if (audioContext && audioContext.state !== 'closed') {
                     audioContext.close().then(() => audioContext = null);
                 }
-                audioVisualizer.style.transform = 'scale(1)';
+                // Clear waveform canvas
+                clearWaveform();
+            };
+
+            // Waveform visualization functions
+            const drawWaveform = (samples, volume) => {
+                const width = waveformCanvas.width;
+                const height = waveformCanvas.height;
+                const centerY = height / 2;
+
+                // Clear canvas with slight fade for smooth animation
+                waveformCtx.fillStyle = 'rgba(229, 231, 235, 0.3)'; // gray-200 with alpha
+                waveformCtx.fillRect(0, 0, width, height);
+
+                // Draw waveform
+                waveformCtx.beginPath();
+                waveformCtx.strokeStyle = volume > 0.05 ? '#10B981' : '#6B7280'; // green-500 or gray-500
+                waveformCtx.lineWidth = 2;
+
+                const sliceWidth = width / samples.length;
+                let x = 0;
+
+                for (let i = 0; i < samples.length; i++) {
+                    const amplitude = samples[i] * height * 2; // Scale amplitude
+                    const y = centerY + amplitude;
+
+                    if (i === 0) {
+                        waveformCtx.moveTo(x, y);
+                    } else {
+                        waveformCtx.lineTo(x, y);
+                    }
+                    x += sliceWidth;
+                }
+
+                waveformCtx.stroke();
+            };
+
+            const clearWaveform = () => {
+                waveformCtx.fillStyle = '#E5E7EB'; // gray-200
+                waveformCtx.fillRect(0, 0, waveformCanvas.width, waveformCanvas.height);
             };
 
             const startRecording = async () => {
@@ -307,6 +426,10 @@
                             downloadLink.href = `/download/${sessionId}`;
                             downloadContainer.classList.remove('hidden');
                         }
+                        break;
+                    case 'reconnecting':
+                        statusSpan.textContent = message || 'Reconnecting...';
+                        stopButton.disabled = false; // Allow user to stop during reconnect
                         break;
                     case 'error':
                         statusSpan.textContent = `Error: ${message}`;
@@ -433,32 +556,68 @@
                 jobElement.id = `job-${jobId}`;
                 jobElement.className = 'bg-gray-100 p-2 rounded-lg';
                 jobElement.innerHTML = `
-                    <p class="text-sm font-medium truncate">${fileName}</p>
-                    <p class="text-xs text-gray-500">Status: <span class="status">Processing...</span></p>
+                    <div class="flex justify-between items-start">
+                        <div class="flex-1 min-w-0">
+                            <p class="text-sm font-medium truncate">${fileName}</p>
+                            <p class="text-xs text-gray-500">Status: <span class="status">Processing...</span></p>
+                        </div>
+                        <button class="cancel-btn ml-2 text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded hover:bg-red-50" data-job-id="${jobId}">Cancel</button>
+                    </div>
                     <div class="result mt-2 text-xs bg-white p-1 rounded hidden"></div>
                 `;
+
+                // Add cancel button handler
+                const cancelBtn = jobElement.querySelector('.cancel-btn');
+                cancelBtn.addEventListener('click', async () => {
+                    try {
+                        const response = await fetch(`/api/transcribe/${jobId}`, { method: 'DELETE' });
+                        if (response.ok) {
+                            showToast('Cancellation requested');
+                        } else {
+                            const data = await response.json();
+                            showToast(data.error || 'Failed to cancel job');
+                        }
+                    } catch (error) {
+                        console.error('Cancel error:', error);
+                        showToast('Failed to cancel job');
+                    }
+                });
+
                 jobStatusContainer.prepend(jobElement);
             };
 
             const pollJobStatus = (jobId) => {
                 if (activePolls.has(jobId)) return;
                 activePolls.add(jobId);
-                
+
                 const interval = setInterval(async () => {
                     try {
                         const response = await fetch(`/api/transcribe/status/${jobId}`);
                         const data = await response.json();
                         const jobElement = document.getElementById(`job-${jobId}`);
-                        
+
                         if (response.ok && jobElement) {
                             const statusSpan = jobElement.querySelector('.status');
-                            if (data.status === 'completed' || data.status === 'error') {
+                            const cancelBtn = jobElement.querySelector('.cancel-btn');
+
+                            if (data.status === 'completed' || data.status === 'error' || data.status === 'cancelled') {
                                 clearInterval(interval);
                                 activePolls.delete(jobId);
                                 statusSpan.textContent = data.status;
+
+                                // Hide cancel button for finished jobs
+                                if (cancelBtn) {
+                                    cancelBtn.classList.add('hidden');
+                                }
+
                                 const resultDiv = jobElement.querySelector('.result');
-                                resultDiv.textContent = data.result;
+                                resultDiv.textContent = data.result || (data.status === 'cancelled' ? 'Job was cancelled' : '');
                                 resultDiv.classList.remove('hidden');
+
+                                // Style cancelled jobs differently
+                                if (data.status === 'cancelled') {
+                                    jobElement.classList.add('opacity-50');
+                                }
                             } else {
                                 statusSpan.textContent = data.status;
                             }
@@ -480,10 +639,116 @@
                 );
             }
 
+            // Format time in seconds to HH:MM:SS format
+            function formatTime(seconds) {
+                const hours = Math.floor(seconds / 3600);
+                const mins = Math.floor((seconds % 3600) / 60);
+                const secs = Math.floor(seconds % 60);
+                return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            }
+
             startButton.addEventListener('click', startRecording);
             stopButton.addEventListener('click', stopRecording);
             toastClose.addEventListener('click', hideToast);
-            
+
+            // Edit transcript functionality
+            const editButton = document.getElementById('edit-button');
+            const transcriptContainer = document.getElementById('transcript-container');
+            const editHint = document.getElementById('edit-hint');
+            let isEditing = false;
+
+            const enableEditing = () => {
+                isEditing = true;
+                transcriptContainer.contentEditable = true;
+                transcriptContainer.classList.add('bg-white', 'border-2', 'border-blue-300', 'p-2', 'rounded');
+                editButton.textContent = 'Done';
+                editButton.classList.remove('bg-gray-200');
+                editButton.classList.add('bg-blue-500', 'text-white');
+                editHint.classList.remove('hidden');
+                transcriptContainer.focus();
+            };
+
+            const disableEditing = () => {
+                isEditing = false;
+                transcriptContainer.contentEditable = false;
+                transcriptContainer.classList.remove('bg-white', 'border-2', 'border-blue-300', 'p-2', 'rounded');
+                editButton.textContent = 'Edit';
+                editButton.classList.add('bg-gray-200');
+                editButton.classList.remove('bg-blue-500', 'text-white');
+                editHint.classList.add('hidden');
+            };
+
+            editButton.addEventListener('click', () => {
+                if (isEditing) {
+                    disableEditing();
+                } else {
+                    enableEditing();
+                }
+            });
+
+            // Exit edit mode on Escape (only when editing transcript)
+            transcriptContainer.addEventListener('keydown', (e) => {
+                if (e.code === 'Escape' && isEditing) {
+                    disableEditing();
+                }
+            });
+
+            // Keyboard shortcuts
+            document.addEventListener('keydown', (e) => {
+                // Don't trigger shortcuts when typing in form fields or editing transcript
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || isEditing) {
+                    return;
+                }
+
+                // Space: Toggle recording
+                if (e.code === 'Space' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                    e.preventDefault();
+                    if (!startButton.disabled) {
+                        startRecording();
+                    } else if (!stopButton.disabled) {
+                        stopRecording();
+                    }
+                }
+
+                // Escape: Stop recording
+                if (e.code === 'Escape') {
+                    if (!stopButton.disabled) {
+                        stopRecording();
+                    }
+                }
+
+                // Ctrl/Cmd + C: Copy transcript (when not selecting text)
+                if ((e.ctrlKey || e.metaKey) && e.code === 'KeyC') {
+                    const selection = window.getSelection();
+                    // Only handle if no text is selected (allow normal copy behavior otherwise)
+                    if (!selection || selection.toString().length === 0) {
+                        e.preventDefault();
+                        const text = finalTranscriptSpan.textContent.trim();
+                        if (text) {
+                            navigator.clipboard.writeText(text).then(() => {
+                                showToast('Transcript copied to clipboard!');
+                            });
+                        }
+                    }
+                }
+
+                // Ctrl/Cmd + S: Download transcript as text
+                if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
+                    e.preventDefault();
+                    const text = finalTranscriptSpan.textContent.trim();
+                    if (text) {
+                        const blob = new Blob([text], { type: 'text/plain' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `transcript_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.txt`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        showToast('Transcript downloaded!');
+                    }
+                }
+            });
+
             document.getElementById('vad_prob_threshold').addEventListener('input', (e) => {
                 document.getElementById('vad_prob_threshold_output').textContent = parseFloat(e.target.value).toFixed(2);
             });

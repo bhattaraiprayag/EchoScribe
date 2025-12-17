@@ -1,12 +1,10 @@
-# backend/get_vad.py
+"""Silero VAD model downloader utility for EchoScribe."""
 
 import torch
 
 
-def download_silero_vad():
-    """
-    Downloads the Silero VAD model to the current directory.
-    """
+def download_silero_vad() -> None:
+    """Download Silero VAD model to current directory."""
     print("Downloading Silero VAD model...")
     try:
         torch.hub.load(

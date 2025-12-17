@@ -14,17 +14,26 @@ Here’s a quick look at how to use EchoScribe's real-time and batch transcripti
 
 ## ✨ Features
 
--   **🎙️ Real-time Transcription:** Speak into your microphone and see the transcription appear live.
--   **📂 Batch Processing:** Upload audio files and get the full transcription in the sidebar.
--   **🚀 High Performance:** Uses `faster-whisper` for optimized CTranslate2-based inference.
--   **🗣️ Voice Activity Detection (VAD):** Smartly chunks audio using Silero VAD to transcribe only when speech is detected, improving accuracy and reducing processing.
+-   **🎙️ Real-time Transcription:** Speak into your microphone and see the transcription appear live
+-   **📂 Batch Processing:** Upload audio files and get the full transcription in the sidebar
+-   **🚀 High Performance:** Uses `faster-whisper` for optimized CTranslate2-based inference
+-   **🗣️ Voice Activity Detection (VAD):** Smartly chunks audio using Silero VAD to transcribe only when speech is detected, improving accuracy and reducing processing
 -   **⚙️ Configurable:**
-    -   Choose from various Whisper models (from `tiny` to `large-v3`).
-    -   Select compute device (`CPU` or `CUDA`).
-    -   Adjust VAD parameters like silence duration and speech probability threshold.
--   **💾 Download Recordings:** After a real-time session, download your recording as an MP3 file.
--   **📝 Export Transcripts:** Easily copy the transcript or download it as a `.txt` file.
--   **🌐 Modern UI:** Clean and intuitive interface built with Tailwind CSS.
+    -   Choose from various Whisper models (from `tiny` to `large-v3` and `distil-large-v3`)
+    -   Select compute device (`CPU` or `CUDA`)
+    -   Adjust VAD parameters like silence duration and speech probability threshold
+    -   Configure API key authentication for secure access
+    -   Set rate limiting for API endpoints and file uploads
+    -   Customize session TTL and cleanup intervals
+-   **🔒 Security Features:**
+    -   Optional API key authentication with environment variable support
+    -   Request rate limiting per IP address
+    -   File validation and path traversal protection
+    -   Secure constant-time string comparison for authentication
+-   **💾 Download Recordings:** After a real-time session, download your recording as an MP3 file
+-   **📝 Export Transcripts:** Easily copy the transcript or download it as a `.txt` file
+-   **🌐 Modern UI:** Clean and intuitive interface built with Tailwind CSS
+-   **🧪 Well-Tested:** Comprehensive test suite with 105+ tests covering all major functionality
 
 ## ⚡ How It Works
 
@@ -108,10 +117,11 @@ The application exposes several RESTful and WebSocket endpoints to power the fro
 | `GET` | `/download/{session_id}` | Downloads the complete audio recording of a real-time session as an MP3. |
 
 ## 🏁 Getting Started
+
 ### ⚠️ Important Compatibility Note
 **Apple Silicon (M1/M2/M3) is NOT supported for GPU acceleration**.
 
-The underlying library `CTranslate2` used by `faster-whisper` does not currently have optimized support for Apple's MPS backend. Attempting to use the `mps` device will result in errors/poor performance. Mac users should select the `cpu` device.
+The underlying library `CTranslate2` used by `faster-whisper` does not currently have optimized support for Apple's MPS backend. Attempting to use the `mps` device will result in errors/poor performance. **Mac users should select the `cpu` device**.
 
 ### 🎯 Prerequisites
 - **Python**: Version 3.9+ is recommended.
@@ -197,21 +207,99 @@ The underlying library `CTranslate2` used by `faster-whisper` does not currently
 
 ### 🧪 Running Tests
 
-To ensure everything is working correctly, you can run the built-in test suite. Make sure test dependencies are installed beforehand!
+To ensure everything is working correctly, you can run the comprehensive test suite with 105+ tests:
 
 ```sh
-python tests/run_tests.py           # From the root directory
+# From the root directory
+pytest tests/ -v                    # Run all tests with verbose output
+pytest tests/test_pipeline.py      # Run specific test file
+pytest -k "test_auth"               # Run tests matching pattern
 ```
 
-## 🔧 Configuration
-You can adjust the default application behavior by editing the backend/config.yaml file. This is particularly useful for fine-tuning the Voice Activity Detection (VAD) for your specific microphone or environment.
+**Test Coverage:**
+- API endpoint testing
+- Authentication and authorization
+- Rate limiting and security
+- File validation and sanitization
+- Session and job cleanup
+- Configuration management
+- Model caching and concurrency
+- Real-time transcription pipeline
+- VAD chunking and batching
 
-- `prob_threshold`: The probability threshold for speech detection (higher values are stricter).
-- `silence_duration`: How many seconds of silence trigger the end of an utterance.
-- `min_speech_duration`: The minimum length of a speech segment to be considered for transcription.
+## 🔧 Configuration
+
+You can adjust the default application behavior by editing the [backend/config.yaml](backend/config.yaml) file or using the `/api/settings` endpoint. This is particularly useful for fine-tuning the Voice Activity Detection (VAD) for your specific microphone or environment.
+
+### Key Configuration Options
+
+**VAD Parameters:**
+- `prob_threshold` (0.1-0.9): Speech probability threshold (higher values are stricter, default: 0.8)
+- `silence_duration` (0.1-5.0s): Seconds of silence to trigger end of utterance (default: 0.7)
+- `min_speech_duration` (0.1-2.0s): Minimum speech segment length for transcription (default: 0.3)
+
+**Audio Parameters:**
+- `channels` (1-2): Number of audio channels (default: 1)
+- `sample_rate` (8000-48000Hz): Audio sample rate (default: 16000)
+- `sample_width` (1-4 bytes): Bytes per sample (default: 2)
+
+**Transcription Parameters:**
+- `context_max_length` (0-500): Maximum context length for Whisper to maintain continuity (default: 224)
+
+**Cleanup Parameters:**
+- `session_ttl_minutes` (1-1440): Session time-to-live in minutes (default: 60)
+- `job_retention_minutes` (1-1440): Completed job retention time (default: 120)
+- `cleanup_interval_seconds` (60-3600): Cleanup task interval (default: 300)
+
+**Authentication (Optional):**
+- `enabled` (true/false): Enable API key authentication (default: false)
+- `api_key`: Your API key (can be overridden with `ECHOSCRIBE_API_KEY` environment variable)
+
+**Rate Limiting:**
+- `enabled` (true/false): Enable rate limiting (default: true)
+- `requests_per_minute`: API requests per IP per minute (default: 100)
+- `uploads_per_minute`: File uploads per IP per minute (default: 10)
+
+## 🔒 Security
+
+EchoScribe includes several security features:
+
+- **API Key Authentication**: Optional authentication via `X-API-Key` header with environment variable support
+- **Rate Limiting**: Configurable per-IP rate limiting for API endpoints and file uploads
+- **Input Validation**: Comprehensive validation for file uploads and settings updates
+- **Path Traversal Protection**: Filename sanitization to prevent directory traversal attacks
+- **Secure Comparisons**: Constant-time string comparison for API keys to prevent timing attacks
+
+To enable authentication, set `auth.enabled: true` in `config.yaml` and provide an API key either in the config file or via the `ECHOSCRIBE_API_KEY` environment variable.
+
+## 🏗️ Architecture
+
+**Code Quality:**
+- PEP8 compliant codebase
+- Type annotations throughout
+- Comprehensive docstrings
+- 105+ automated tests
+- Double-check locking for model caching
+- Async/await for non-blocking I/O
+
+**Pipeline Architecture:**
+- Multi-stage async pipeline for real-time processing
+- Queue-based communication between stages
+- VAD-based intelligent audio chunking
+- Transcription context management for accuracy
+- Graceful shutdown handling
 
 ## 🤝 Contributing
+
 Contributions are welcome! Please feel free to submit a pull request or open an issue.
 
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Run tests (`pytest tests/ -v`)
+4. Commit your changes (`git commit -m 'Add amazing feature'`)
+5. Push to the branch (`git push origin feature/amazing-feature`)
+6. Open a Pull Request
+
 ## 📜 License
-This project is licensed under the MIT License.
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

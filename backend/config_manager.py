@@ -1,5 +1,10 @@
-# backend/config_manager.py
+"""YAML configuration management for EchoScribe.
 
+This module provides thread-safe loading, saving, and accessing of application
+configuration stored in config.yaml. It ensures immutability through deep copying.
+"""
+
+import copy
 import logging
 import os
 from typing import Any, Dict
@@ -13,30 +18,65 @@ CONFIG_PATH = os.path.join(CURRENT_DIR, "config.yaml")
 
 logger = logging.getLogger(__name__)
 
+_config_data: Dict[str, Any] = {}
+
 
 def load_config() -> Dict[str, Any]:
-    """Loads the YAML configuration from the file."""
+    """Load YAML configuration from file.
+
+    Returns:
+        Configuration dictionary. Empty dict if file not found or parsing fails.
+    """
+    global _config_data
     try:
         with open(CONFIG_PATH, "r") as f:
-            config = yaml.safe_load(f)
+            _config_data = yaml.safe_load(f) or {}
         logger.info("Configuration loaded successfully.")
-        return config
+        return _config_data
     except FileNotFoundError:
         logger.error(f"Configuration file not found at {CONFIG_PATH}")
-        return {}
+        _config_data = {}
+        return _config_data
     except yaml.YAMLError as e:
         logger.error(f"Error parsing YAML file: {e}")
-        return {}
+        _config_data = {}
+        return _config_data
 
 
-def save_config(config: Dict[str, Any]):
-    """Saves the configuration to the YAML file."""
+def reload_config() -> Dict[str, Any]:
+    """Reload configuration from file.
+
+    Returns:
+        Reloaded configuration dictionary.
+    """
+    return load_config()
+
+
+def get_config() -> Dict[str, Any]:
+    """Get a deep copy of current configuration.
+
+    Returns:
+        Deep copy of configuration dictionary.
+    """
+    return copy.deepcopy(_config_data)
+
+
+def save_config(config: Dict[str, Any]) -> None:
+    """Save configuration to YAML file and update in-memory config.
+
+    Args:
+        config: Configuration dictionary to save.
+    """
+    global _config_data
     try:
         with open(CONFIG_PATH, "w") as f:
             yaml.dump(config, f, default_flow_style=False)
+        _config_data = copy.deepcopy(config)
         logger.info("Configuration saved successfully.")
     except Exception as e:
         logger.error(f"Error saving configuration: {e}")
 
 
-config_data = load_config()
+_config_data = load_config()
+
+config_data = _config_data

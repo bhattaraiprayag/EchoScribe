@@ -1,4 +1,4 @@
-# backend/pipeline.py
+"""Real-time transcription pipeline for EchoScribe."""
 
 import asyncio
 import json
@@ -16,6 +16,7 @@ import torchaudio
 from config_manager import config_data
 from fastapi import WebSocketDisconnect
 from faster_whisper import WhisperModel
+from utils import VAD_CACHE_DIR
 
 
 logging.basicConfig(
@@ -24,10 +25,43 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class TranscriptionSession:
-    """Manages the state and pipeline for a single WebSocket connection."""
+def _calculate_audio_duration(
+    audio_bytes: bytes,
+    sample_rate: int,
+    sample_width: int
+) -> float:
+    """Calculate duration of audio data in seconds.
 
-    def __init__(self, session_id: str, websocket, config: Dict, whisper_model):
+    Args:
+        audio_bytes: Raw audio data.
+        sample_rate: Audio sample rate in Hz.
+        sample_width: Bytes per sample.
+
+    Returns:
+        Duration in seconds.
+    """
+    num_samples = len(audio_bytes) / sample_width
+    return num_samples / sample_rate
+
+
+class TranscriptionSession:
+    """Manages state and pipeline for single WebSocket connection."""
+
+    def __init__(
+        self,
+        session_id: str,
+        websocket,
+        config: Dict,
+        whisper_model
+    ):
+        """Initialize transcription session.
+
+        Args:
+            session_id: Unique session identifier.
+            websocket: WebSocket connection.
+            config: Session configuration dict.
+            whisper_model: Loaded WhisperModel instance.
+        """
         self.session_id = session_id
         self.websocket = websocket
         self.config = config
@@ -50,18 +84,65 @@ class TranscriptionSession:
         self.temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pcm")
         self.transcription_context = ""
         self._is_running = True
+        self.batch_buffer = bytearray()
+        self.cumulative_audio_duration: float = 0.0
         logger.info(f"[{session_id}] New session created with config: {config}")
+
+    def _update_transcription_context(
+        self,
+        new_text: str,
+        max_length: int
+    ) -> None:
+        """Update transcription context with new text.
+
+        Args:
+            new_text: New transcription text to add.
+            max_length: Maximum character length for context.
+        """
+        if not new_text or not new_text.strip():
+            return
+
+        if self.transcription_context:
+            self.transcription_context = (
+                f"{self.transcription_context} {new_text.strip()}"
+            )
+        else:
+            self.transcription_context = new_text.strip()
+
+        if len(self.transcription_context) > max_length:
+            trimmed = self.transcription_context[-max_length:]
+            first_space = trimmed.find(' ')
+            if first_space > 0 and first_space < len(trimmed) - 1:
+                self.transcription_context = trimmed[first_space + 1:]
+            else:
+                self.transcription_context = trimmed
 
 
     def load_vad_model(self):
-        """Loads the Silero VAD model."""
+        """Load Silero VAD model from cache.
+
+        Returns:
+            Tuple of model and utils.
+
+        Raises:
+            Exception: If model loading fails.
+        """
         try:
+            # Set torch hub directory to use our cache
+            original_hub_dir = torch.hub.get_dir()
+            torch.hub.set_dir(VAD_CACHE_DIR)
+
+            logger.info(f"Loading Silero VAD model from cache dir: {VAD_CACHE_DIR}")
             model, utils = torch.hub.load(
                 repo_or_dir="snakers4/silero-vad",
                 model="silero_vad",
                 force_reload=False,
                 onnx=True,
             )
+
+            # Restore original hub directory
+            torch.hub.set_dir(original_hub_dir)
+            logger.info("Silero VAD model loaded successfully")
             return model, utils
         except Exception as e:
             logger.error(f"Failed to load Silero VAD model: {e}")
@@ -69,12 +150,20 @@ class TranscriptionSession:
 
 
     def load_whisper_model(self):
-        """Loads the Faster Whisper model based on session config."""
+        """Load Faster Whisper model based on session config.
+
+        Returns:
+            Loaded WhisperModel instance.
+
+        Raises:
+            Exception: If model loading fails.
+        """
         model_size = self.config.get("model", "tiny")
         device = self.config.get("device", "cpu")
         compute_type = "int8" if device == "cpu" else "float16"
         logger.info(
-            f"[{self.session_id}] Loading Whisper model '{model_size}' on '{device}'..."
+            f"[{self.session_id}] Loading Whisper model "
+            f"'{model_size}' on '{device}'..."
         )
         try:
             model = WhisperModel(model_size, device=device, compute_type=compute_type)
@@ -85,8 +174,8 @@ class TranscriptionSession:
             raise
 
 
-    async def run_pipeline(self):
-        """Runs all tasks in the pipeline concurrently."""
+    async def run_pipeline(self) -> None:
+        """Run all pipeline tasks concurrently."""
         tasks = [
             self.websocket_ingestion_task(),
             self.vad_chunking_task(),
@@ -100,9 +189,8 @@ class TranscriptionSession:
         finally:
             self.cleanup()
 
-
-    def cleanup(self):
-        """Cleans up resources at the end of the session."""
+    def cleanup(self) -> None:
+        """Clean up resources at end of session."""
         logger.info(f"[{self.session_id}] Cleaning up session resources.")
         self._is_running = False
         if self.temp_file:
@@ -113,8 +201,8 @@ class TranscriptionSession:
         logger.info(f"[{self.session_id}] Session resources cleaned up.")
 
 
-    async def websocket_ingestion_task(self):
-        """Receives raw audio from the client and puts it in a queue."""
+    async def websocket_ingestion_task(self) -> None:
+        """Receive raw audio from client and queue it."""
         logger.info(f"[{self.session_id}] Starting WebSocket ingestion task.")
         while self._is_running:
             try:
@@ -122,7 +210,8 @@ class TranscriptionSession:
                 await self.raw_audio_queue.put(audio_chunk)
             except WebSocketDisconnect:
                 logger.info(
-                    f"[{self.session_id}] Ingestion task stopped due to WebSocket disconnect."
+                    f"[{self.session_id}] "
+                    f"Ingestion task stopped due to WebSocket disconnect."
                 )
                 break
             except Exception as e:
@@ -131,18 +220,31 @@ class TranscriptionSession:
         await self.raw_audio_queue.put(None)
 
 
-    async def vad_chunking_task(self):
-        """Consumes raw audio, runs VAD, and chunks audio into utterances."""
+    async def vad_chunking_task(self) -> None:
+        """Consume raw audio, run VAD, and chunk into utterances."""
         logger.info(f"[{self.session_id}] Starting VAD & Chunking task.")
         vad_sample_rate = self.vad_params.get("sample_rate", 16000)
         vad_window_size = self.vad_params.get("window_size", 512)
         audio_sample_width = self.audio_params.get("sample_width", 2)
+        audio_sample_rate = self.audio_params.get("sample_rate", 16000)
         vad_prob_threshold = self.vad_params.get("prob_threshold", 0.5)
         vad_silence_duration = self.vad_params.get("silence_duration", 0.7)
         vad_min_speech_duration = self.vad_params.get("min_speech_duration", 0.2)
+
+        batch_short_utterances = self.vad_params.get("batch_short_utterances", False)
+        batch_min_duration = self.vad_params.get("batch_min_duration", 1.0)
+
         while True:
             audio_chunk = await self.raw_audio_queue.get()
             if audio_chunk is None:
+                if self.batch_buffer:
+                    logger.info(
+                        f"[{self.session_id}] End of stream, processing batched utterances."
+                    )
+                    await self.transcription_queue.put(
+                        {"audio": bytes(self.batch_buffer), "type": "final"}
+                    )
+                    self.batch_buffer.clear()
                 if self.utterance_buffer:
                     logger.info(
                         f"[{self.session_id}] End of stream, processing final utterance."
@@ -152,7 +254,7 @@ class TranscriptionSession:
                     )
                     self.utterance_buffer.clear()
                 break
-            
+
             self.temp_file.write(audio_chunk)
             self.audio_buffer.extend(audio_chunk)
 
@@ -161,11 +263,11 @@ class TranscriptionSession:
                     : vad_window_size * audio_sample_width
                 ]
                 del self.audio_buffer[: vad_window_size * audio_sample_width]
-                
+
                 audio_int16 = np.frombuffer(chunk_to_process_bytes, dtype=np.int16)
                 audio_float32 = audio_int16.astype(np.float32) / 32768.0
                 audio_tensor = torch.from_numpy(audio_float32)
-                
+
                 speech_prob = self.vad_model(audio_tensor, vad_sample_rate).item()
 
                 if speech_prob > vad_prob_threshold:
@@ -179,7 +281,7 @@ class TranscriptionSession:
                         self.utterance_buffer.extend(chunk_to_process_bytes)
                         if self.silence_start_time is None:
                             self.silence_start_time = time.time()
-                        
+
                         silence_elapsed = time.time() - self.silence_start_time
                         speech_duration = time.time() - (
                             self.speech_start_time or time.time()
@@ -192,9 +294,62 @@ class TranscriptionSession:
                             logger.info(
                                 f"[{self.session_id}] End of utterance detected (speech: {speech_duration:.2f}s, silence: {silence_elapsed:.2f}s)."
                             )
-                            await self.transcription_queue.put(
-                                {"audio": bytes(self.utterance_buffer), "type": "final"}
+
+                            utterance_audio = bytes(self.utterance_buffer)
+                            utterance_duration = _calculate_audio_duration(
+                                utterance_audio, audio_sample_rate, audio_sample_width
                             )
+
+                            if (batch_short_utterances and
+                                utterance_duration < batch_min_duration):
+                                self.batch_buffer.extend(utterance_audio)
+                                batch_duration = _calculate_audio_duration(
+                                    bytes(self.batch_buffer),
+                                    audio_sample_rate,
+                                    audio_sample_width
+                                )
+                                logger.info(
+                                    f"[{self.session_id}] Batching short utterance "
+                                    f"({utterance_duration:.2f}s), "
+                                    f"batch total: {batch_duration:.2f}s"
+                                )
+
+                                if batch_duration >= batch_min_duration:
+                                    logger.info(
+                                        f"[{self.session_id}] Sending batched "
+                                        f"utterances ({batch_duration:.2f}s)"
+                                    )
+                                    await self.transcription_queue.put(
+                                        {
+                                            "audio": bytes(self.batch_buffer),
+                                            "type": "final"
+                                        }
+                                    )
+                                    self.batch_buffer.clear()
+                            else:
+                                if self.batch_buffer:
+                                    batch_duration = _calculate_audio_duration(
+                                        bytes(self.batch_buffer),
+                                        audio_sample_rate,
+                                        audio_sample_width
+                                    )
+                                    logger.info(
+                                        f"[{self.session_id}] Flushing batch buffer "
+                                        f"({batch_duration:.2f}s) before longer "
+                                        f"utterance"
+                                    )
+                                    await self.transcription_queue.put(
+                                        {
+                                            "audio": bytes(self.batch_buffer),
+                                            "type": "final"
+                                        }
+                                    )
+                                    self.batch_buffer.clear()
+
+                                await self.transcription_queue.put(
+                                    {"audio": utterance_audio, "type": "final"}
+                                )
+
                             self.utterance_buffer.clear()
                             self.is_speaking = False
                             self.silence_start_time = None
@@ -213,20 +368,33 @@ class TranscriptionSession:
         await self.transcription_queue.put(None)
 
 
-    async def whisper_worker_task(self):
-        """Consumes audio utterances and transcribes them using Whisper."""
+    async def whisper_worker_task(self) -> None:
+        """Consume audio utterances and transcribe using Whisper."""
         logger.info(f"[{self.session_id}] Starting Whisper worker task.")
         language = self.config.get("language", "en")
         context_max_length = self.transcription_params.get("context_max_length", 224)
+        word_timestamps_enabled = self.transcription_params.get(
+            "word_timestamps",
+            False
+        )
+        audio_sample_rate = self.audio_params.get("sample_rate", 16000)
+        audio_sample_width = self.audio_params.get("sample_width", 2)
+
         while True:
             task = await self.transcription_queue.get()
-            if task is None: break
-            
+            if task is None:
+                break
+
             audio_bytes = task["audio"]
             task_type = task["type"]
 
             if not audio_bytes:
                 continue
+
+            chunk_duration = _calculate_audio_duration(
+                audio_bytes, audio_sample_rate, audio_sample_width
+            )
+
             try:
                 audio_np = (
                     np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
@@ -238,17 +406,66 @@ class TranscriptionSession:
                     beam_size=5,
                     language=language,
                     initial_prompt=self.transcription_context,
-                    vad_filter=False,  # Redundant; Silero-VAD is superior
+                    vad_filter=False,
+                    word_timestamps=word_timestamps_enabled,
                 )
-                transcription_text = "".join([seg.text for seg in segments]).strip()
+
+                segment_list = list(segments)
+                transcription_text = (
+                    "".join([seg.text for seg in segment_list]).strip()
+                )
 
                 if transcription_text:
                     logger.info(
-                        f"[{self.session_id}] Transcription ({task_type}): {transcription_text}"
+                        f"[{self.session_id}] Transcription ({task_type}): "
+                        f"{transcription_text}"
                     )
-                    result = {"text": transcription_text, "type": task_type}
+
+                    if word_timestamps_enabled:
+                        for segment in segment_list:
+                            if hasattr(segment, 'words') and segment.words:
+                                for word in segment.words:
+                                    word_result = {
+                                        "text": word.word.strip(),
+                                        "type": "word",
+                                        "start": round(
+                                            self.cumulative_audio_duration +
+                                            word.start,
+                                            2
+                                        ),
+                                        "end": round(
+                                            self.cumulative_audio_duration +
+                                            word.end,
+                                            2
+                                        ),
+                                    }
+                                    await self.results_queue.put(word_result)
+
+                    start_time = segment_list[0].start if segment_list else 0.0
+                    end_time = segment_list[-1].end if segment_list else 0.0
+
+                    result = {
+                        "text": transcription_text,
+                        "type": task_type,
+                        "start": round(
+                            self.cumulative_audio_duration + start_time,
+                            2
+                        ),
+                        "end": round(
+                            self.cumulative_audio_duration + end_time,
+                            2
+                        ),
+                    }
                     await self.results_queue.put(result)
-                    
+
+                    if task_type == "final":
+                        self._update_transcription_context(
+                            transcription_text, context_max_length
+                        )
+
+                if task_type == "final":
+                    self.cumulative_audio_duration += chunk_duration
+
             except Exception as e:
                 logger.error(
                     f"[{self.session_id}] Error during transcription: {e}",
@@ -257,8 +474,8 @@ class TranscriptionSession:
         await self.results_queue.put(None)
 
 
-    async def websocket_emitter_task(self):
-        """Sends transcription results back to the client."""
+    async def websocket_emitter_task(self) -> None:
+        """Send transcription results back to client."""
         logger.info(f"[{self.session_id}] Starting WebSocket emitter task.")
         while True:
             result = await self.results_queue.get()
@@ -268,7 +485,8 @@ class TranscriptionSession:
                 await self.websocket.send_text(json.dumps(result))
             except WebSocketDisconnect:
                 logger.warning(
-                    f"[{self.session_id}] Emitter task stopped due to WebSocket disconnect."
+                    f"[{self.session_id}] "
+                    f"Emitter task stopped due to WebSocket disconnect."
                 )
                 break
             except Exception as e:
@@ -277,7 +495,17 @@ class TranscriptionSession:
 
 
 def convert_pcm_to_mp3(pcm_filepath: str) -> str:
-    """Converts a raw PCM audio file to MP3 format."""
+    """Convert raw PCM audio file to MP3 format.
+
+    Args:
+        pcm_filepath: Path to PCM file.
+
+    Returns:
+        Path to converted MP3 file.
+
+    Raises:
+        ffmpeg.Error: If conversion fails.
+    """
     mp3_filepath = pcm_filepath.replace(".pcm", ".mp3")
     logger.info(f"Converting {pcm_filepath} to {mp3_filepath}...")
     audio_sample_rate = config_data.get("audio_parameters", {}).get(
