@@ -37,11 +37,15 @@ async def test_settings_flow(async_client):
     assert get_response_1.status_code == 200
     original_settings = get_response_1.json()
     original_threshold = original_settings["vad_parameters"]["prob_threshold"]
-    new_settings = original_settings.copy()
     new_threshold = round(original_threshold + 0.1, 2)
     if new_threshold > 0.9:  # Stay within valid bounds
         new_threshold = round(original_threshold - 0.1, 2)
-    new_settings["vad_parameters"]["prob_threshold"] = new_threshold
+    # Only send the fields that need to be updated (SettingsUpdate has extra="forbid")
+    new_settings = {
+        "vad_parameters": {
+            "prob_threshold": new_threshold
+        }
+    }
     post_response = await async_client.post("/api/settings", json=new_settings)
     assert post_response.status_code == 200
     assert post_response.json()["message"] == "Settings updated successfully"
@@ -49,8 +53,13 @@ async def test_settings_flow(async_client):
     assert get_response_2.status_code == 200
     updated_settings = get_response_2.json()
     assert updated_settings["vad_parameters"]["prob_threshold"] == new_threshold
-    # Reset to original
-    post_response_reset = await async_client.post("/api/settings", json=original_settings)
+    # Reset to original (only send vad_parameters)
+    reset_settings = {
+        "vad_parameters": {
+            "prob_threshold": original_threshold
+        }
+    }
+    post_response_reset = await async_client.post("/api/settings", json=reset_settings)
     assert post_response_reset.status_code == 200
 
 
@@ -128,3 +137,18 @@ async def test_config_models_order(async_client):
     assert models[0] == "tiny"
     # Verify distil-large-v3 comes before large-v3
     assert models.index("distil-large-v3") < models.index("large-v3")
+
+
+async def test_cors_headers_present(async_client):
+    """Tests that CORS headers are present in responses."""
+    # Simulate cross-origin request
+    response = await async_client.options(
+        "/api/config",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
+        }
+    )
+    # CORS preflight should return 200
+    assert response.status_code == 200
+    assert "access-control-allow-origin" in response.headers

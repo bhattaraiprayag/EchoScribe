@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import platform
+import re
 import uuid
 from contextlib import asynccontextmanager
 from typing import Dict, List
@@ -21,7 +22,7 @@ from cleanup import (
 from config_manager import config_data, get_config, reload_config, save_config
 from models import SettingsUpdate
 from auth import api_key_auth
-from rate_limiter import api_rate_limiter, upload_rate_limiter
+from rate_limiter import api_rate_limiter, upload_rate_limiter, websocket_rate_limiter
 from utils import (
     ALLOWED_AUDIO_EXTENSIONS,
     MAX_FILE_SIZE,
@@ -47,6 +48,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from faster_whisper import WhisperModel
@@ -200,6 +202,18 @@ async def lifespan(app):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Configure CORS middleware
+cors_config = config_data.get("cors", {})
+if cors_config.get("enabled", True):
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_config.get("allow_origins", ["*"]),
+        allow_credentials=cors_config.get("allow_credentials", True),
+        allow_methods=cors_config.get("allow_methods", ["*"]),
+        allow_headers=cors_config.get("allow_headers", ["*"]),
+    )
+    logger.info(f"CORS middleware enabled with origins: {cors_config.get('allow_origins', ['*'])}")
 
 
 @app.get("/api/settings")
@@ -493,15 +507,57 @@ def check_model_status(model: str, device: str = "cpu") -> JSONResponse:
     return JSONResponse(content=status)
 
 
+MAX_SESSION_ID_LENGTH = 128
+SESSION_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+
 @app.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
+async def websocket_endpoint(
+    websocket: WebSocket,
+    session_id: str,
+    api_key: str = None
+) -> None:
     """WebSocket endpoint for real-time transcription.
 
     Args:
         websocket: WebSocket connection.
         session_id: Session identifier.
+        api_key: Optional API key for authentication (query parameter).
     """
+    # Validate session ID length and format
+    if len(session_id) > MAX_SESSION_ID_LENGTH:
+        logger.warning(f"WebSocket rejected: session_id too long ({len(session_id)} chars)")
+        await websocket.close(code=4002, reason="Session ID too long")
+        return
+
+    if not SESSION_ID_PATTERN.match(session_id):
+        logger.warning(f"WebSocket rejected: invalid session_id format")
+        await websocket.close(code=4003, reason="Invalid session ID format")
+        return
+
+    # Import here to avoid circular imports
+    from auth import verify_api_key
+
+    # Verify authentication before accepting connection
+    if not verify_api_key(api_key):
+        logger.warning(f"WebSocket auth failed for session {session_id}: invalid or missing API key")
+        await websocket.close(code=4001, reason="Authentication failed: invalid or missing API key")
+        return
+
+    # Get client IP for rate limiting
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    forwarded = websocket.headers.get("X-Forwarded-For")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip()
+
+    # Check WebSocket connection rate limit
+    if not websocket_rate_limiter.can_connect(client_ip):
+        logger.warning(f"WebSocket rate limit exceeded for IP {client_ip}")
+        await websocket.close(code=4004, reason="Too many concurrent connections")
+        return
+
     await websocket.accept()
+    websocket_rate_limiter.record_connection(client_ip)
     logger.info(f"WebSocket connection accepted for session_id: {session_id}")
 
     active_websockets[session_id] = websocket
@@ -578,6 +634,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         except Exception:
             pass
     finally:
+        # Release rate limiter connection count
+        websocket_rate_limiter.release_connection(client_ip)
         active_websockets.pop(session_id, None)
 
         if session:

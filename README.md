@@ -113,6 +113,8 @@ The application exposes several RESTful and WebSocket endpoints to power the fro
 | `POST` | `/api/settings` | Updates and saves new settings to `config.yaml`. |
 | `POST` | `/api/transcribe` | Uploads an audio file for batch transcription. Returns a `job_id`. |
 | `GET` | `/api/transcribe/status/{job_id}` | Polls the status and result of a batch transcription job. |
+| `DELETE` | `/api/transcribe/{job_id}` | Cancels a pending or running batch transcription job. |
+| `GET` | `/api/model/status` | Returns cache and download status for a specific model. |
 | `WEBSOCKET` | `/ws/{session_id}` | Establishes the real-time transcription WebSocket connection. |
 | `GET` | `/download/{session_id}` | Downloads the complete audio recording of a real-time session as an MP3. |
 
@@ -120,90 +122,138 @@ The application exposes several RESTful and WebSocket endpoints to power the fro
 
 ### ⚠️ Important Compatibility Note
 **Apple Silicon (M1/M2/M3) is NOT supported for GPU acceleration**.
-
-The underlying library `CTranslate2` used by `faster-whisper` does not currently have optimized support for Apple's MPS backend. Attempting to use the `mps` device will result in errors/poor performance. **Mac users should select the `cpu` device**.
+Mac users should select the `cpu` device. The application will default to CPU on macOS.
 
 ### 🎯 Prerequisites
-- **Python**: Version 3.9+ is recommended.
+- **Python**: Version 3.11+ is recommended.
 - **Git**: To clone the repository.
+- **uv**: A fast Python package installer and resolver. [Install uv](https://docs.astral.sh/uv/getting-started/installation/).
 - **FFmpeg**: This is a system dependency and must be installed separately.
     - **Ubuntu/Debian**: `sudo apt update && sudo apt install ffmpeg`
     - **macOS (with Homebrew)**: `brew install ffmpeg`
     - **Windows**: Download from the [official site](https://ffmpeg.org/download.html) and add the bin directory to your system's PATH.
 
 ### 🛠️ Installation
-1. Clone the repository:
 
+1. **Clone the repository**:
     ```sh
     git clone https://github.com/bhattaraiprayag/echoscribe.git
     cd echoscribe
     ```
-2. Create and activate a virtual environment: 
 
+2. **Sync dependencies**:
+    EchoScribe uses `uv` for dependency management. This command creates a virtual environment and installs all dependencies (including hardware-optimized PyTorch versions).
     ```sh
-    # Using venv
-    python -m venv myenv
-    source myenv/Scripts/activate   # On Windows
-    source myenv/bin/activate       # On macOS/Linux
-
-    # Using Conda
-    conda create --name myenv python=3.10
-    conda activate myenv
+    uv sync
     ```
 
-3. **Install PyTorch (Hardware-Specific)**:
-
-    **For Windows/Linux with an NVIDIA GPU (Recommended)**:
-    
-    Install PyTorch with CUDA support. The version must be compatible with your NVIDIA driver. The command below is for CUDA 12.9. Check the PyTorch website for the correct command for your setup.
+3. **Download the VAD model**:
+    The Silero VAD model is required for real-time transcription.
     ```sh
-    pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129
+    uv run python backend/get_vad.py
     ```
-
-    **For CPU-Only Systems (including macOS)**:
-    
-    Install the standard CPU version of PyTorch.
-    ```sh
-    pip3 install torch torchvision torchaudio
-    ```
-
-4. **Install project dependencies**:
-    ```sh
-    pip install -r requirements.txt
-    ```
-
-5. **Download the VAD model**:
-    
-    The Silero VAD model is required for real-time transcription. Run the following script to download it.
-
-    ```sh
-    python backend/get_vad.py
-    ```
-    
-    This will download `silero_vad.onnx` into the current directory. The application expects it to be there.
 
 ## ▶️ Running the Application
-1. **Navigate to the backend directory**:
 
+1. **Start the server**:
+    - For development (with auto-reloading):
+      ```sh
+      uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+      ```
+    - For production:
+      ```sh
+      uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
+      ```
+
+2. **Open the web interface**:
+    Open your browser and navigate to [http://localhost:8000](http://localhost:8000).
+
+### 🐳 Docker Deployment
+
+EchoScribe can be deployed using Docker for easier setup and isolation.
+
+#### Prerequisites
+- **Docker**: Version 20.10+ recommended
+- **Docker Compose**: Version 2.0+ recommended
+- **NVIDIA Container Toolkit** (optional): Required for GPU acceleration in Docker
+
+#### Quick Start with Docker Compose
+
+1. **Clone and navigate to the repository**:
     ```sh
-    cd backend
+    git clone https://github.com/bhattaraiprayag/echoscribe.git
+    cd echoscribe
     ```
 
-2. **Start the server**:
-
-- For development (with auto-reloading):
-
+2. **Start the application**:
     ```sh
-    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-    ```
-- For production:
-    ```sh
-    uvicorn main:app --host 0.0.0.0 --port 8000
+    docker-compose up -d
     ```
 
-3. **Open the web interface**:
-
+3. **Access the application**:
     Open your browser and navigate to http://localhost:8000.
+
+4. **View logs**:
+    ```sh
+    docker-compose logs -f
+    ```
+
+5. **Stop the application**:
+    ```sh
+    docker-compose down
+    ```
+
+#### GPU Support (NVIDIA)
+
+To enable GPU acceleration in Docker:
+
+1. **Install NVIDIA Container Toolkit**:
+    ```sh
+    # Ubuntu/Debian
+    distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+    curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+    curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+    sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+    sudo systemctl restart docker
+    ```
+
+2. **Modify `docker-compose.yml`** to enable GPU:
+    ```yaml
+    services:
+      echoscribe:
+        # ... existing config ...
+        deploy:
+          resources:
+            reservations:
+              devices:
+                - driver: nvidia
+                  count: 1
+                  capabilities: [gpu]
+    ```
+
+3. **Verify GPU access**:
+    ```sh
+    docker-compose exec echoscribe nvidia-smi
+    ```
+
+#### Environment Variables
+
+Configure the application using environment variables:
+
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `ECHOSCRIBE_API_KEY` | API key for authentication (overrides config) | (empty) |
+| `MODELS_CACHE_DIR` | Directory for model cache | `./models_cache` |
+
+Example:
+```sh
+ECHOSCRIBE_API_KEY=your-secret-key docker-compose up -d
+```
+
+#### Persistent Storage
+
+The Docker setup uses volumes for persistent storage:
+- `models_cache`: Stores downloaded Whisper models (prevents re-download)
 
 ### 🧪 Running Tests
 
@@ -211,9 +261,9 @@ To ensure everything is working correctly, you can run the comprehensive test su
 
 ```sh
 # From the root directory
-pytest tests/ -v                    # Run all tests with verbose output
-pytest tests/test_pipeline.py      # Run specific test file
-pytest -k "test_auth"               # Run tests matching pattern
+uv run pytest tests/ -v                    # Run all tests with verbose output
+uv run pytest tests/test_pipeline.py      # Run specific test file
+uv run pytest -k "test_auth"               # Run tests matching pattern
 ```
 
 **Test Coverage:**

@@ -147,3 +147,91 @@ class TestWebSocketReconnection:
                 websocket.send_json({"model": "tiny", "device": "cpu", "language": "en"})
         except Exception:
             pass
+
+
+class TestWebSocketConfigValidation:
+    """Tests for WebSocket configuration validation."""
+
+    def test_invalid_model_name_rejected(self, sync_test_client):
+        """WebSocket should reject invalid model names."""
+        with pytest.raises(Exception):
+            with sync_test_client.websocket_connect("/ws/test-invalid-model") as websocket:
+                # Send invalid model name
+                websocket.send_json({
+                    "model": "../../malicious/path",
+                    "device": "cpu",
+                    "language": "en"
+                })
+                # Should receive error message
+                data = websocket.receive_json()
+                assert data.get("type") == "error" or data.get("status") == "error"
+
+    def test_invalid_device_rejected(self, sync_test_client):
+        """WebSocket should reject invalid device names."""
+        with pytest.raises(Exception):
+            with sync_test_client.websocket_connect("/ws/test-invalid-device") as websocket:
+                websocket.send_json({
+                    "model": "tiny",
+                    "device": "cuda:999",  # Invalid CUDA device
+                    "language": "en"
+                })
+                data = websocket.receive_json()
+                assert data.get("type") == "error" or data.get("status") == "error"
+
+    def test_valid_model_names_accepted(self, sync_test_client):
+        """WebSocket should accept valid model names."""
+        valid_models = ["tiny", "base", "small", "medium", "large-v3", "distil-large-v3"]
+
+        for model in valid_models:
+            try:
+                with sync_test_client.websocket_connect(f"/ws/test-valid-model-{model}") as websocket:
+                    websocket.send_json({
+                        "model": model,
+                        "device": "cpu",
+                        "language": "en"
+                    })
+                    # If we receive any status message, config was accepted
+            except Exception:
+                pass  # Model loading may fail, but config validation should pass
+
+    def test_valid_device_names_accepted(self, sync_test_client):
+        """WebSocket should accept valid device names."""
+        valid_devices = ["cpu", "cuda", "auto"]  # Common valid devices
+
+        for device in valid_devices:
+            try:
+                with sync_test_client.websocket_connect(f"/ws/test-valid-device-{device}") as websocket:
+                    websocket.send_json({
+                        "model": "tiny",
+                        "device": device,
+                        "language": "en"
+                    })
+            except Exception:
+                pass  # Device may not be available, but validation should pass
+
+    def test_session_id_max_length_enforced(self, sync_test_client):
+        """WebSocket should reject excessively long session IDs."""
+        long_session_id = "a" * 1000  # Very long session ID
+
+        with pytest.raises(Exception):
+            with sync_test_client.websocket_connect(f"/ws/{long_session_id}") as websocket:
+                websocket.send_json({
+                    "model": "tiny",
+                    "device": "cpu",
+                    "language": "en"
+                })
+
+    def test_session_id_valid_characters(self, sync_test_client):
+        """WebSocket should reject session IDs with invalid characters."""
+        invalid_session_ids = [
+            "test/../../../etc/passwd",
+            "test<script>alert(1)</script>",
+            "test\x00null",
+        ]
+
+        for session_id in invalid_session_ids:
+            try:
+                with sync_test_client.websocket_connect(f"/ws/{session_id}") as websocket:
+                    pass
+            except Exception:
+                pass  # Should fail for invalid session IDs

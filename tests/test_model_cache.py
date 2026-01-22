@@ -394,6 +394,65 @@ class TestDownloadModelFiles:
             assert isinstance(result, str)
 
 
+class TestSyncModelCacheLocking:
+    """Tests for synchronous model cache thread safety."""
+
+    def test_sync_model_cache_lock_exists(self):
+        """sync_model_cache_lock should be a threading.Lock."""
+        from utils import sync_model_cache_lock
+        import threading
+
+        assert isinstance(sync_model_cache_lock, type(threading.Lock()))
+
+    def test_get_whisper_model_sync_uses_lock(self):
+        """get_whisper_model_sync should use lock to prevent race conditions."""
+        from utils import get_whisper_model_sync, model_cache, sync_model_cache_lock
+        import threading
+
+        model_cache.clear()
+        load_count = 0
+        load_count_lock = threading.Lock()
+
+        def slow_load(*args, **kwargs):
+            nonlocal load_count
+            with load_count_lock:
+                load_count += 1
+            # Simulate slow loading
+            import time
+            time.sleep(0.1)
+            return MagicMock()
+
+        with patch('utils.WhisperModel', side_effect=slow_load), \
+             patch('utils.is_model_cached', return_value=True):
+            # Start multiple concurrent threads
+            threads = []
+            results = []
+            results_lock = threading.Lock()
+
+            def load_model():
+                result = get_whisper_model_sync("tiny", "cpu")
+                with results_lock:
+                    results.append(result)
+
+            for _ in range(3):
+                t = threading.Thread(target=load_model)
+                threads.append(t)
+                t.start()
+
+            for t in threads:
+                t.join()
+
+            # Model should only be loaded once due to locking
+            assert load_count == 1
+
+            # All results should be the same model instance
+            assert len(results) == 3
+            assert results[0] is results[1]
+            assert results[1] is results[2]
+
+        model_cache.clear()
+
+
 class TestProgressCallback:
     """Tests for progress callback functionality in model loading."""
 

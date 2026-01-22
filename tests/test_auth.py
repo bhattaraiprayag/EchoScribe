@@ -281,3 +281,117 @@ class TestAuthEnvironmentVariable:
 
         # Clean up
         monkeypatch.setattr("auth._auth_config_override", None)
+
+
+class TestWebSocketAuthentication:
+    """Test WebSocket authentication."""
+
+    def test_websocket_rejects_connection_when_auth_enabled_no_key(self, monkeypatch):
+        """Test that WebSocket rejects connection when auth is enabled but no key provided."""
+        from fastapi.testclient import TestClient
+        from unittest.mock import patch, MagicMock
+        import auth
+
+        # Enable auth
+        monkeypatch.setattr("auth._auth_config_override", {
+            "enabled": True,
+            "api_key": "secret-key"
+        })
+
+        # Mock torch.hub.load to avoid loading actual model
+        with patch('torch.hub.load') as mock_hub_load:
+            mock_hub_load.return_value = MagicMock()
+            from main import app
+
+            client = TestClient(app)
+
+            # WebSocket without API key should be rejected
+            with pytest.raises(Exception) as exc_info:
+                with client.websocket_connect("/ws/test-session"):
+                    pass
+
+            # Should get a close or rejection
+            # The exception type may vary, but connection should fail
+
+        # Clean up
+        monkeypatch.setattr("auth._auth_config_override", None)
+
+    def test_websocket_rejects_connection_when_auth_enabled_wrong_key(self, monkeypatch):
+        """Test that WebSocket rejects connection when auth is enabled and wrong key provided."""
+        from fastapi.testclient import TestClient
+        from unittest.mock import patch, MagicMock
+        import auth
+
+        # Enable auth
+        monkeypatch.setattr("auth._auth_config_override", {
+            "enabled": True,
+            "api_key": "secret-key"
+        })
+
+        with patch('torch.hub.load') as mock_hub_load:
+            mock_hub_load.return_value = MagicMock()
+            from main import app
+
+            client = TestClient(app)
+
+            # WebSocket with wrong API key should be rejected
+            with pytest.raises(Exception):
+                with client.websocket_connect("/ws/test-session?api_key=wrong-key"):
+                    pass
+
+        # Clean up
+        monkeypatch.setattr("auth._auth_config_override", None)
+
+    def test_websocket_accepts_connection_when_auth_enabled_correct_key(self, monkeypatch):
+        """Test that WebSocket accepts connection when auth is enabled and correct key provided."""
+        from fastapi.testclient import TestClient
+        from unittest.mock import patch, MagicMock
+        import auth
+
+        # Enable auth
+        monkeypatch.setattr("auth._auth_config_override", {
+            "enabled": True,
+            "api_key": "secret-key"
+        })
+
+        with patch('torch.hub.load') as mock_hub_load:
+            mock_hub_load.return_value = MagicMock()
+            from main import app
+
+            client = TestClient(app)
+
+            # WebSocket with correct API key should be accepted
+            # This should NOT raise an exception
+            with client.websocket_connect("/ws/test-session?api_key=secret-key") as websocket:
+                # Connection succeeded - send config to complete handshake
+                websocket.send_json({"model": "tiny", "device": "cpu", "language": "en"})
+                # We don't need to wait for response, just verify connection was accepted
+
+        # Clean up
+        monkeypatch.setattr("auth._auth_config_override", None)
+
+    def test_websocket_accepts_connection_when_auth_disabled(self, monkeypatch):
+        """Test that WebSocket accepts connection when auth is disabled."""
+        from fastapi.testclient import TestClient
+        from unittest.mock import patch, MagicMock
+        import auth
+
+        # Disable auth
+        monkeypatch.setattr("auth._auth_config_override", {
+            "enabled": False,
+            "api_key": ""
+        })
+
+        with patch('torch.hub.load') as mock_hub_load:
+            mock_hub_load.return_value = MagicMock()
+            from main import app
+
+            client = TestClient(app)
+
+            # WebSocket without API key should be accepted when auth is disabled
+            with client.websocket_connect("/ws/test-session") as websocket:
+                websocket.send_json({"model": "tiny", "device": "cpu", "language": "en"})
+                # Connection succeeded
+
+        # Clean up
+        monkeypatch.setattr("auth._auth_config_override", None)

@@ -182,3 +182,178 @@ class TestRateLimiter:
         assert upload_rate_limiter is not None
         assert api_rate_limiter.requests_per_minute == 100
         assert upload_rate_limiter.requests_per_minute == 10
+
+
+class TestRateLimiterMemoryCleanup:
+    """Tests for rate limiter memory cleanup to prevent leaks."""
+
+    def test_cleanup_stale_ips_removes_old_entries(self):
+        """cleanup_stale_ips should remove IPs with no recent requests."""
+        from rate_limiter import RateLimiter
+
+        limiter = RateLimiter(requests_per_minute=10, enabled=True)
+        limiter.reset()
+
+        # Simulate requests from multiple IPs
+        mock_requests = []
+        for i in range(5):
+            mock_req = MagicMock()
+            mock_req.client.host = f"192.168.1.{i}"
+            mock_req.headers.get.return_value = None
+            mock_requests.append(mock_req)
+            limiter.record_request(mock_req)
+
+        # All 5 IPs should be tracked
+        assert len(limiter._requests) == 5
+
+        # Manually age all entries to be older than window
+        old_time = time.time() - 120  # 2 minutes ago
+        for ip in limiter._requests:
+            limiter._requests[ip] = [old_time]
+
+        # Run stale cleanup
+        limiter.cleanup_stale_ips()
+
+        # All entries should be removed since they're stale
+        assert len(limiter._requests) == 0
+
+    def test_cleanup_stale_ips_preserves_recent_entries(self):
+        """cleanup_stale_ips should keep IPs with recent requests."""
+        from rate_limiter import RateLimiter
+
+        limiter = RateLimiter(requests_per_minute=10, enabled=True)
+        limiter.reset()
+
+        # Add recent request
+        mock_req1 = MagicMock()
+        mock_req1.client.host = "192.168.1.1"
+        mock_req1.headers.get.return_value = None
+        limiter.record_request(mock_req1)
+
+        # Add old request from different IP
+        mock_req2 = MagicMock()
+        mock_req2.client.host = "192.168.1.2"
+        mock_req2.headers.get.return_value = None
+        limiter.record_request(mock_req2)
+
+        # Age the second IP's entry
+        limiter._requests["192.168.1.2"] = [time.time() - 120]
+
+        # Cleanup
+        limiter.cleanup_stale_ips()
+
+        # Only the recent IP should remain
+        assert "192.168.1.1" in limiter._requests
+        assert "192.168.1.2" not in limiter._requests
+        assert len(limiter._requests) == 1
+
+    def test_cleanup_stale_ips_removes_empty_entries(self):
+        """cleanup_stale_ips should remove IPs with empty request lists."""
+        from rate_limiter import RateLimiter
+
+        limiter = RateLimiter(requests_per_minute=10, enabled=True)
+        limiter.reset()
+
+        # Manually add empty entries (could happen after cleanup_old_requests)
+        limiter._requests["192.168.1.1"] = []
+        limiter._requests["192.168.1.2"] = []
+        limiter._requests["192.168.1.3"] = [time.time()]  # Recent
+
+        assert len(limiter._requests) == 3
+
+        limiter.cleanup_stale_ips()
+
+        # Only the non-empty entry should remain
+        assert len(limiter._requests) == 1
+        assert "192.168.1.3" in limiter._requests
+
+    def test_periodic_cleanup_called_on_check(self):
+        """Stale IP cleanup should be triggered periodically during checks."""
+        from rate_limiter import RateLimiter
+
+        limiter = RateLimiter(requests_per_minute=10, enabled=True)
+        limiter.reset()
+
+        # Set last cleanup time to the past
+        limiter._last_full_cleanup = time.time() - 120  # 2 minutes ago
+
+        # Add a stale IP entry
+        limiter._requests["192.168.1.100"] = [time.time() - 120]
+
+        # Make a request from a different IP - this should trigger cleanup
+        mock_req = MagicMock()
+        mock_req.client.host = "192.168.1.1"
+        mock_req.headers.get.return_value = None
+
+        # Check should trigger periodic cleanup
+        limiter.check_rate_limit(mock_req)
+
+        # The stale IP should have been cleaned up
+        assert "192.168.1.100" not in limiter._requests
+
+
+class TestWebSocketRateLimiter:
+    """Tests for WebSocket connection rate limiting."""
+
+    def test_websocket_rate_limiter_exists(self):
+        """WebSocket rate limiter should be available."""
+        from rate_limiter import websocket_rate_limiter
+
+        assert websocket_rate_limiter is not None
+
+    def test_websocket_rate_limiter_tracks_connections(self):
+        """WebSocket rate limiter should track connections per IP."""
+        from rate_limiter import WebSocketRateLimiter
+
+        limiter = WebSocketRateLimiter(max_connections_per_ip=3, enabled=True)
+        limiter.reset()
+
+        ip = "192.168.1.1"
+
+        # First 3 connections should succeed
+        assert limiter.can_connect(ip) is True
+        limiter.record_connection(ip)
+        assert limiter.can_connect(ip) is True
+        limiter.record_connection(ip)
+        assert limiter.can_connect(ip) is True
+        limiter.record_connection(ip)
+
+        # 4th connection should fail
+        assert limiter.can_connect(ip) is False
+
+        # Release one connection
+        limiter.release_connection(ip)
+
+        # Now should be able to connect again
+        assert limiter.can_connect(ip) is True
+
+    def test_websocket_rate_limiter_disabled(self):
+        """When disabled, WebSocket rate limiter should allow all connections."""
+        from rate_limiter import WebSocketRateLimiter
+
+        limiter = WebSocketRateLimiter(max_connections_per_ip=1, enabled=False)
+        ip = "192.168.1.1"
+
+        # Even if we record many connections, should always allow
+        for _ in range(10):
+            assert limiter.can_connect(ip) is True
+            limiter.record_connection(ip)
+
+    def test_websocket_rate_limiter_tracks_per_ip(self):
+        """WebSocket rate limiter should track each IP separately."""
+        from rate_limiter import WebSocketRateLimiter
+
+        limiter = WebSocketRateLimiter(max_connections_per_ip=2, enabled=True)
+        limiter.reset()
+
+        ip1 = "192.168.1.1"
+        ip2 = "192.168.1.2"
+
+        # Fill up IP1
+        limiter.record_connection(ip1)
+        limiter.record_connection(ip1)
+        assert limiter.can_connect(ip1) is False
+
+        # IP2 should still be able to connect
+        assert limiter.can_connect(ip2) is True
+        limiter.record_connection(ip2)

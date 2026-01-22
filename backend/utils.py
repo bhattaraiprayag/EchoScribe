@@ -4,12 +4,12 @@ import asyncio
 import logging
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Callable, Dict, Optional, Set
 
 from faster_whisper import WhisperModel
 from huggingface_hub import hf_hub_download, HfFileSystem
-from tqdm import tqdm
 
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, str, float], None]  # (status, message, progress)
 
 # Model cache directory configuration
-MODELS_CACHE_DIR = os.getenv("MODELS_CACHE_DIR", os.path.join(os.getcwd(), "models_cache"))
+# Use project root (parent of backend/) to ensure consistent location regardless of cwd
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+MODELS_CACHE_DIR = os.getenv("MODELS_CACHE_DIR", str(_PROJECT_ROOT / "models_cache"))
 WHISPER_CACHE_DIR = os.path.join(MODELS_CACHE_DIR, "whisper_models")
 VAD_CACHE_DIR = os.path.join(MODELS_CACHE_DIR, "silero_vad")
 
@@ -54,6 +56,7 @@ MAX_FILE_SIZE: int = 0
 
 model_cache: Dict[str, WhisperModel] = {}
 model_cache_lock = asyncio.Lock()
+sync_model_cache_lock = threading.Lock()  # For synchronous access in background tasks
 
 # Required files for faster-whisper models (only download what's needed)
 REQUIRED_MODEL_FILES = [
@@ -358,24 +361,31 @@ def get_whisper_model_sync(model_size: str, device: str) -> WhisperModel:
     """
     model_key = f"{model_size}_{device}"
 
+    # Quick check without lock (may be stale but avoids lock contention)
     if model_key in model_cache:
         return model_cache[model_key]
 
-    # Check if model is already cached to avoid network requests
-    use_local_only = is_model_cached(model_size, WHISPER_CACHE_DIR)
-    if use_local_only:
-        logger.info(f"Loading Whisper model '{model_size}' on '{device}' from local cache (offline mode)")
-    else:
-        logger.info(f"Downloading Whisper model '{model_size}' on '{device}' to cache dir: {WHISPER_CACHE_DIR}")
+    # Acquire lock for thread-safe loading
+    with sync_model_cache_lock:
+        # Double-check inside lock to prevent duplicate loading
+        if model_key in model_cache:
+            return model_cache[model_key]
 
-    compute_type = "int8" if device == "cpu" else "int8_float16"
-    model = WhisperModel(
-        model_size,
-        device=device,
-        compute_type=compute_type,
-        download_root=WHISPER_CACHE_DIR,
-        local_files_only=use_local_only
-    )
-    model_cache[model_key] = model
-    logger.info(f"Whisper model '{model_key}' loaded and cached.")
-    return model
+        # Check if model is already cached to avoid network requests
+        use_local_only = is_model_cached(model_size, WHISPER_CACHE_DIR)
+        if use_local_only:
+            logger.info(f"Loading Whisper model '{model_size}' on '{device}' from local cache (offline mode)")
+        else:
+            logger.info(f"Downloading Whisper model '{model_size}' on '{device}' to cache dir: {WHISPER_CACHE_DIR}")
+
+        compute_type = "int8" if device == "cpu" else "int8_float16"
+        model = WhisperModel(
+            model_size,
+            device=device,
+            compute_type=compute_type,
+            download_root=WHISPER_CACHE_DIR,
+            local_files_only=use_local_only
+        )
+        model_cache[model_key] = model
+        logger.info(f"Whisper model '{model_key}' loaded and cached.")
+        return model

@@ -13,7 +13,6 @@ env/
 myenv/
 
 # Downloaded models and temporary media files
-# The code downloads/creates these, so they shouldn't be in version control
 *.onnx
 *.pcm
 *.mp3
@@ -26,11 +25,6 @@ models_cache/
 
 # OS-specific files
 .DS_Store
-Thumbs.db
 
 # Log files
 *.log
-
-# Claude artefacts
-CLAUDE.md
-.claude/
