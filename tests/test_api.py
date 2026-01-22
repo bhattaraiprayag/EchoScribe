@@ -1,8 +1,5 @@
 # tests/test_api.py
 
-import asyncio
-import json
-import os
 from pathlib import Path
 
 import pytest
@@ -41,11 +38,7 @@ async def test_settings_flow(async_client):
     if new_threshold > 0.9:  # Stay within valid bounds
         new_threshold = round(original_threshold - 0.1, 2)
     # Only send the fields that need to be updated (SettingsUpdate has extra="forbid")
-    new_settings = {
-        "vad_parameters": {
-            "prob_threshold": new_threshold
-        }
-    }
+    new_settings = {"vad_parameters": {"prob_threshold": new_threshold}}
     post_response = await async_client.post("/api/settings", json=new_settings)
     assert post_response.status_code == 200
     assert post_response.json()["message"] == "Settings updated successfully"
@@ -54,11 +47,7 @@ async def test_settings_flow(async_client):
     updated_settings = get_response_2.json()
     assert updated_settings["vad_parameters"]["prob_threshold"] == new_threshold
     # Reset to original (only send vad_parameters)
-    reset_settings = {
-        "vad_parameters": {
-            "prob_threshold": original_threshold
-        }
-    }
+    reset_settings = {"vad_parameters": {"prob_threshold": original_threshold}}
     post_response_reset = await async_client.post("/api/settings", json=reset_settings)
     assert post_response_reset.status_code == 200
 
@@ -74,7 +63,7 @@ async def test_websocket_connection(sync_test_client):
 
 @pytest.mark.skipif(
     not (Path(__file__).parent / "transcribe_test.mp3").exists(),
-    reason="Test audio file not found"
+    reason="Test audio file not found",
 )
 async def test_file_transcription(async_client):
     """Tests the file upload endpoint (job submission only, not full transcription)."""
@@ -96,7 +85,9 @@ async def test_file_transcription(async_client):
 
 async def test_model_status_endpoint(async_client):
     """Tests the /api/model/status endpoint."""
-    response = await async_client.get("/api/model/status", params={"model": "tiny", "device": "cpu"})
+    response = await async_client.get(
+        "/api/model/status", params={"model": "tiny", "device": "cpu"}
+    )
     assert response.status_code == 200
     data = response.json()
     assert "cached" in data
@@ -108,7 +99,9 @@ async def test_model_status_endpoint(async_client):
 
 async def test_model_status_unknown_model(async_client):
     """Tests /api/model/status with unknown model."""
-    response = await async_client.get("/api/model/status", params={"model": "nonexistent-xyz", "device": "cpu"})
+    response = await async_client.get(
+        "/api/model/status", params={"model": "nonexistent-xyz", "device": "cpu"}
+    )
     assert response.status_code == 200
     data = response.json()
     assert data["cached"] is False
@@ -117,7 +110,9 @@ async def test_model_status_unknown_model(async_client):
 
 async def test_model_status_includes_repo_id(async_client):
     """Tests that /api/model/status includes repo_id for known models."""
-    response = await async_client.get("/api/model/status", params={"model": "base", "device": "cuda"})
+    response = await async_client.get(
+        "/api/model/status", params={"model": "base", "device": "cuda"}
+    )
     assert response.status_code == 200
     data = response.json()
     assert "repo_id" in data
@@ -147,7 +142,7 @@ async def test_cors_headers_present(async_client):
         headers={
             "Origin": "http://localhost:3000",
             "Access-Control-Request-Method": "GET",
-        }
+        },
     )
     # CORS preflight should return 200
     assert response.status_code == 200

@@ -9,7 +9,9 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Dict, List
 
+import starlette.formparsers as formparsers
 import torch
+from auth import api_key_auth
 from cleanup import (
     CleanupManager,
     JobInfo,
@@ -19,10 +21,26 @@ from cleanup import (
     get_cleanup_config,
     get_temp_dir,
 )
-from config_manager import config_data, get_config, reload_config, save_config
+from config_manager import config_data, get_config, save_config
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from models import SettingsUpdate
-from auth import api_key_auth
-from rate_limiter import api_rate_limiter, upload_rate_limiter, websocket_rate_limiter
+from pipeline import TranscriptionSession, convert_pcm_to_mp3
+from rate_limiter import upload_rate_limiter, websocket_rate_limiter
+from starlette.requests import ClientDisconnect
 from utils import (
     ALLOWED_AUDIO_EXTENSIONS,
     MAX_FILE_SIZE,
@@ -35,27 +53,6 @@ from utils import (
     sanitize_filename,
 )
 
-
-from fastapi import (
-    BackgroundTasks,
-    Depends,
-    FastAPI,
-    File,
-    HTTPException,
-    Form,
-    Request,
-    UploadFile,
-    WebSocket,
-    WebSocketDisconnect,
-)
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from faster_whisper import WhisperModel
-from pipeline import TranscriptionSession, convert_pcm_to_mp3
-from starlette.requests import ClientDisconnect
-
-import starlette.formparsers as formparsers
 formparsers.MultiPartParser.max_file_size = 10 * 1024 * 1024 * 1024
 
 
@@ -116,7 +113,9 @@ async def lifespan(app):
     temp_dir = get_temp_dir()
     orphaned_count = cleanup_orphaned_temp_files(temp_dir, max_age_seconds=3600)
     if orphaned_count > 0:
-        logger.info(f"Cleaned up {orphaned_count} orphaned temp files from previous runs")
+        logger.info(
+            f"Cleaned up {orphaned_count} orphaned temp files from previous runs"
+        )
 
     # Preload Silero VAD model at startup
     logger.info("Checking Silero VAD model availability...")
@@ -143,7 +142,9 @@ async def lifespan(app):
         models_to_preload = preload_config.get("models", [])
         device = preload_config.get("device", "cpu")
         if models_to_preload:
-            logger.info(f"Preloading {len(models_to_preload)} Whisper models on {device}...")
+            logger.info(
+                f"Preloading {len(models_to_preload)} Whisper models on {device}..."
+            )
             for model_name in models_to_preload:
                 try:
                     logger.info(f"Preloading model: {model_name}")
@@ -187,7 +188,7 @@ async def lifespan(app):
     for session_id, session_info in list(sessions.items()):
         try:
             session = session_info.session
-            if hasattr(session, 'temp_file') and session.temp_file:
+            if hasattr(session, "temp_file") and session.temp_file:
                 temp_path = session.temp_file.name
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
@@ -213,7 +214,10 @@ if cors_config.get("enabled", True):
         allow_methods=cors_config.get("allow_methods", ["*"]),
         allow_headers=cors_config.get("allow_headers", ["*"]),
     )
-    logger.info(f"CORS middleware enabled with origins: {cors_config.get('allow_origins', ['*'])}")
+    logger.info(
+        "CORS middleware enabled with origins: "
+        f"{cors_config.get('allow_origins', ['*'])}"
+    )
 
 
 @app.get("/api/settings")
@@ -228,8 +232,7 @@ def get_settings() -> JSONResponse:
 
 @app.post("/api/settings")
 async def set_settings(
-    settings: SettingsUpdate,
-    _: str = Depends(api_key_auth)
+    settings: SettingsUpdate, _: str = Depends(api_key_auth)
 ) -> JSONResponse:
     """Update application settings with validation.
 
@@ -247,9 +250,11 @@ async def set_settings(
     update_dict = settings.model_dump(exclude_unset=True)
     for key, value in update_dict.items():
         if value is not None:
-            if (key in current_config and
-                isinstance(current_config[key], dict) and
-                isinstance(value, dict)):
+            if (
+                key in current_config
+                and isinstance(current_config[key], dict)
+                and isinstance(value, dict)
+            ):
                 current_config[key].update(value)
             else:
                 current_config[key] = value
@@ -294,7 +299,7 @@ async def transcribe_file(
             detail=(
                 f"Invalid file type. Allowed formats: "
                 f"{', '.join(sorted(ALLOWED_AUDIO_EXTENSIONS))}"
-            )
+            ),
         )
 
     job_id = str(uuid.uuid4())
@@ -318,9 +323,8 @@ async def transcribe_file(
             os.unlink(file_path)
         del transcription_jobs[job_id]
         raise HTTPException(
-            status_code=400,
-            detail="Client disconnected during upload"
-        )
+            status_code=400, detail="Client disconnected during upload"
+        ) from None
 
     if MAX_FILE_SIZE > 0 and file_size > MAX_FILE_SIZE:
         os.unlink(file_path)
@@ -328,14 +332,12 @@ async def transcribe_file(
         raise HTTPException(
             status_code=413,
             detail=(
-                f"File too large. Maximum size: "
-                f"{MAX_FILE_SIZE // (1024 * 1024)} MB"
-            )
+                f"File too large. Maximum size: {MAX_FILE_SIZE // (1024 * 1024)} MB"
+            ),
         )
 
     logger.info(
-        f"[{job_id}] Received file: {filename} "
-        f"({file_size / (1024*1024):.2f} MB)"
+        f"[{job_id}] Received file: {filename} ({file_size / (1024 * 1024):.2f} MB)"
     )
 
     background_tasks.add_task(
@@ -362,8 +364,7 @@ async def get_transcription_status(job_id: str) -> JSONResponse:
 
 @app.delete("/api/transcribe/{job_id}")
 async def cancel_transcription(
-    job_id: str,
-    _: str = Depends(api_key_auth)
+    job_id: str, _: str = Depends(api_key_auth)
 ) -> JSONResponse:
     """Cancel transcription job.
 
@@ -382,23 +383,16 @@ async def cancel_transcription(
 
     if job.status != "processing":
         return JSONResponse(
-            content={"error": "Job is not in processing state"},
-            status_code=400
+            content={"error": "Job is not in processing state"}, status_code=400
         )
 
     job.cancel()
     logger.info(f"[{job_id}] Cancellation requested")
-    return JSONResponse(
-        content={"message": "Cancellation requested", "job_id": job_id}
-    )
+    return JSONResponse(content={"message": "Cancellation requested", "job_id": job_id})
 
 
 def run_file_transcription(
-    job_id: str,
-    file_path: str,
-    model_size: str,
-    language: str,
-    device: str
+    job_id: str, file_path: str, model_size: str, language: str, device: str
 ) -> None:
     """Background task to transcribe audio file.
 
@@ -440,10 +434,7 @@ def run_file_transcription(
             job.mark_completed("completed", result_text)
         logger.info(f"[{job_id}] File transcription completed successfully.")
     except Exception as e:
-        logger.error(
-            f"[{job_id}] Error during file transcription: {e}",
-            exc_info=True
-        )
+        logger.error(f"[{job_id}] Error during file transcription: {e}", exc_info=True)
         job = transcription_jobs.get(job_id)
         if job and not job.cancelled:
             job.mark_completed("error", str(e))
@@ -508,14 +499,12 @@ def check_model_status(model: str, device: str = "cpu") -> JSONResponse:
 
 
 MAX_SESSION_ID_LENGTH = 128
-SESSION_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(
-    websocket: WebSocket,
-    session_id: str,
-    api_key: str = None
+    websocket: WebSocket, session_id: str, api_key: str = None
 ) -> None:
     """WebSocket endpoint for real-time transcription.
 
@@ -526,12 +515,14 @@ async def websocket_endpoint(
     """
     # Validate session ID length and format
     if len(session_id) > MAX_SESSION_ID_LENGTH:
-        logger.warning(f"WebSocket rejected: session_id too long ({len(session_id)} chars)")
+        logger.warning(
+            f"WebSocket rejected: session_id too long ({len(session_id)} chars)"
+        )
         await websocket.close(code=4002, reason="Session ID too long")
         return
 
     if not SESSION_ID_PATTERN.match(session_id):
-        logger.warning(f"WebSocket rejected: invalid session_id format")
+        logger.warning("WebSocket rejected: invalid session_id format")
         await websocket.close(code=4003, reason="Invalid session ID format")
         return
 
@@ -540,8 +531,13 @@ async def websocket_endpoint(
 
     # Verify authentication before accepting connection
     if not verify_api_key(api_key):
-        logger.warning(f"WebSocket auth failed for session {session_id}: invalid or missing API key")
-        await websocket.close(code=4001, reason="Authentication failed: invalid or missing API key")
+        logger.warning(
+            f"WebSocket auth failed for session {session_id}: "
+            "invalid or missing API key"
+        )
+        await websocket.close(
+            code=4001, reason="Authentication failed: invalid or missing API key"
+        )
         return
 
     # Get client IP for rate limiting
@@ -569,12 +565,14 @@ async def websocket_endpoint(
     async def send_status(status: str, message: str, progress: float):
         """Send status update over WebSocket."""
         try:
-            await websocket.send_json({
-                "type": "status",
-                "status": status,
-                "message": message,
-                "progress": progress
-            })
+            await websocket.send_json(
+                {
+                    "type": "status",
+                    "status": status,
+                    "message": message,
+                    "progress": progress,
+                }
+            )
         except Exception as e:
             logger.warning(f"[{session_id}] Failed to send status: {e}")
 
@@ -586,8 +584,7 @@ async def websocket_endpoint(
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 asyncio.run_coroutine_threadsafe(
-                    send_status(status, message, progress),
-                    loop
+                    send_status(status, message, progress), loop
                 )
         except Exception as e:
             logger.warning(f"[{session_id}] Progress callback error: {e}")
@@ -602,7 +599,9 @@ async def websocket_endpoint(
         if is_model_cached(model_size):
             await send_status("loading", f"Loading {model_size} on {device}...", 0.3)
         else:
-            await send_status("downloading", f"Model not found. Downloading {model_size}...", 0)
+            await send_status(
+                "downloading", f"Model not found. Downloading {model_size}...", 0
+            )
 
         # Load model with progress updates
         whisper_model = await get_whisper_model(model_size, device, progress_callback)
@@ -619,18 +618,12 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         logger.info(f"[{session_id}] WebSocket disconnected.")
     except Exception as e:
-        logger.error(
-            f"[{session_id}] Error in WebSocket endpoint: {e}",
-            exc_info=True
-        )
+        logger.error(f"[{session_id}] Error in WebSocket endpoint: {e}", exc_info=True)
         # Try to send error status
         try:
-            await websocket.send_json({
-                "type": "status",
-                "status": "error",
-                "message": str(e),
-                "progress": 0
-            })
+            await websocket.send_json(
+                {"type": "status", "status": "error", "message": str(e), "progress": 0}
+            )
         except Exception:
             pass
     finally:
@@ -649,8 +642,7 @@ async def websocket_endpoint(
 
 @app.get("/download/{session_id}")
 async def download_recording(
-    session_id: str,
-    background_tasks: BackgroundTasks
+    session_id: str, background_tasks: BackgroundTasks
 ) -> FileResponse:
     """Download recording as MP3.
 
@@ -668,8 +660,7 @@ async def download_recording(
             status_code=404,
         )
     session = session_info.session
-    if (not hasattr(session, 'temp_file') or
-        not os.path.exists(session.temp_file.name)):
+    if not hasattr(session, "temp_file") or not os.path.exists(session.temp_file.name):
         return JSONResponse(
             content={"error": "Session not found or file is unavailable"},
             status_code=404,
@@ -679,9 +670,7 @@ async def download_recording(
         mp3_path = convert_pcm_to_mp3(pcm_path)
 
         def cleanup_files() -> None:
-            logger.info(
-                f"[{session_id}] Cleaning up files: {pcm_path}, {mp3_path}"
-            )
+            logger.info(f"[{session_id}] Cleaning up files: {pcm_path}, {mp3_path}")
             if os.path.exists(pcm_path):
                 os.unlink(pcm_path)
             if os.path.exists(mp3_path):
@@ -698,24 +687,27 @@ async def download_recording(
         )
     except Exception as e:
         logger.error(
-            f"[{session_id}] Error during download conversion: {e}",
-            exc_info=True
+            f"[{session_id}] Error during download conversion: {e}", exc_info=True
         )
         return JSONResponse(
-            content={"error": "Failed to convert audio file"},
-            status_code=500
+            content={"error": "Failed to convert audio file"}, status_code=500
         )
 
 
 # Mount frontend static files using path relative to this script's location
 # This ensures it works both locally and in Docker
-FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
+FRONTEND_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "frontend"
+)
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 else:
-    logger.warning(f"Frontend directory not found at {FRONTEND_DIR}, static files not mounted")
+    logger.warning(
+        f"Frontend directory not found at {FRONTEND_DIR}, static files not mounted"
+    )
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

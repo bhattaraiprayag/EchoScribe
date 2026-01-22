@@ -2,8 +2,9 @@
 """Tests for rate limiting functionality."""
 
 import time
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 from fastapi import HTTPException
 
 

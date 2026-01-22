@@ -3,7 +3,7 @@ audio_parameters:
   sample_rate: 16000
   sample_width: 2
 auth:
-  api_key: ''
+  api_key: ""
   enabled: false
 cleanup_parameters:
   cleanup_interval_seconds: 300
@@ -12,11 +12,11 @@ cleanup_parameters:
 cors:
   allow_credentials: true
   allow_headers:
-  - '*'
+    - "*"
   allow_methods:
-  - '*'
+    - "*"
   allow_origins:
-  - '*'
+    - "*"
   enabled: true
 preload_models:
   device: cpu

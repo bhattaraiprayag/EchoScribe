@@ -4,11 +4,9 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
+from config_manager import get_config
 from fastapi import HTTPException, Security
 from fastapi.security.api_key import APIKeyHeader
-
-from config_manager import get_config
-
 
 logger = logging.getLogger(__name__)
 
@@ -82,11 +80,12 @@ def _secure_compare(a: str, b: str) -> bool:
         True if strings are equal, False otherwise.
     """
     import hmac
+
     return hmac.compare_digest(a.encode(), b.encode())
 
 
 async def api_key_auth(
-    api_key: Optional[str] = Security(api_key_header)
+    api_key: Optional[str] = Security(api_key_header),
 ) -> Optional[str]:
     """FastAPI dependency for API key authentication.
 
@@ -106,5 +105,5 @@ async def api_key_auth(
     raise HTTPException(
         status_code=401,
         detail="Invalid or missing API key",
-        headers={"WWW-Authenticate": "ApiKey"}
+        headers={"WWW-Authenticate": "ApiKey"},
     )

@@ -16,6 +16,7 @@ This guide will help you get EchoScribe up and running quickly on your local mac
 ## 🚀 Running Locally with `uv`
 
 1.  **Clone the repository:**
+
     ```powershell
     git clone https://github.com/bhattaraiprayag/echoscribe.git
     cd echoscribe
@@ -23,17 +24,20 @@ This guide will help you get EchoScribe up and running quickly on your local mac
 
 2.  **Sync dependencies:**
     This will create a virtual environment (`.venv`) and install all required packages into it.
+
     ```powershell
     uv sync
     ```
 
 3.  **Download VAD Model (Auto-downloading, but you can pre-fetch if desired):**
     The application will attempt to download `silero_vad.onnx` on first run if missing, but you can verify using:
+
     ```powershell
     uv run python backend/get_vad.py
     ```
 
 4.  **Run the Server:**
+
     ```powershell
     uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
     ```
@@ -44,6 +48,7 @@ This guide will help you get EchoScribe up and running quickly on your local mac
 ## 🐳 Running with Docker
 
 1.  **Start the container:**
+
     ```powershell
     docker-compose up --build
     ```

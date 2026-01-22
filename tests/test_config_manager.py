@@ -1,12 +1,7 @@
 # tests/test_config_manager.py
 """Tests for configuration management."""
 
-import os
 import copy
-import tempfile
-
-import pytest
-import yaml
 
 
 class TestConfigManager:

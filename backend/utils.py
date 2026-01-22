@@ -9,8 +9,7 @@ from pathlib import Path
 from typing import Callable, Dict, Optional, Set
 
 from faster_whisper import WhisperModel
-from huggingface_hub import hf_hub_download, HfFileSystem
-
+from huggingface_hub import HfFileSystem, hf_hub_download
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +48,18 @@ MODEL_REPO_MAP: Dict[str, str] = {
 }
 
 ALLOWED_AUDIO_EXTENSIONS: Set[str] = {
-    ".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".wma", ".webm",
-    ".mkv", ".mp4", ".avi", ".mov"
+    ".mp3",
+    ".wav",
+    ".m4a",
+    ".ogg",
+    ".flac",
+    ".aac",
+    ".wma",
+    ".webm",
+    ".mkv",
+    ".mp4",
+    ".avi",
+    ".mov",
 }
 MAX_FILE_SIZE: int = 0
 
@@ -89,14 +98,24 @@ def get_model_status(model_size: str, cache_dir: Optional[str] = None) -> Dict:
     model_cache_path = Path(cache_dir) / cache_name
 
     if not model_cache_path.exists():
-        return {"cached": False, "repo_id": repo_id, "missing_files": REQUIRED_MODEL_FILES}
+        return {
+            "cached": False,
+            "repo_id": repo_id,
+            "missing_files": REQUIRED_MODEL_FILES,
+        }
 
     snapshots_dir = model_cache_path / "snapshots"
     if not snapshots_dir.exists():
-        return {"cached": False, "repo_id": repo_id, "missing_files": REQUIRED_MODEL_FILES}
+        return {
+            "cached": False,
+            "repo_id": repo_id,
+            "missing_files": REQUIRED_MODEL_FILES,
+        }
 
     # Check for most recent snapshot
-    snapshot_dirs = sorted(snapshots_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True)
+    snapshot_dirs = sorted(
+        snapshots_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True
+    )
     for snapshot_dir in snapshot_dirs:
         if snapshot_dir.is_dir():
             # Check which files exist
@@ -129,7 +148,7 @@ def get_model_status(model_size: str, cache_dir: Optional[str] = None) -> Dict:
 def download_model_files(
     model_size: str,
     cache_dir: Optional[str] = None,
-    progress_callback: Optional[ProgressCallback] = None
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> str:
     """Download only required model files with progress tracking.
 
@@ -169,7 +188,7 @@ def download_model_files(
     downloaded_size = 0
     downloaded_path = None
 
-    for i, filename in enumerate(REQUIRED_MODEL_FILES):
+    for _, filename in enumerate(REQUIRED_MODEL_FILES):
         file_size = files_info.get(filename, 0)
         file_size_mb = file_size / (1024 * 1024) if file_size else 0
 
@@ -178,7 +197,7 @@ def download_model_files(
             progress_callback(
                 "downloading",
                 f"Downloading {filename} ({file_size_mb:.1f} MB)...",
-                overall_progress
+                overall_progress,
             )
 
         try:
@@ -212,10 +231,10 @@ def sanitize_filename(filename: str) -> str:
     Returns:
         Sanitized filename safe for filesystem operations.
     """
-    safe_name = re.sub(r'[/\\]', '_', filename)
-    safe_name = re.sub(r'\.\.', '_', safe_name)
-    safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', safe_name)
-    safe_name = safe_name.strip('_.')
+    safe_name = re.sub(r"[/\\]", "_", filename)
+    safe_name = re.sub(r"\.\.", "_", safe_name)
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", safe_name)
+    safe_name = safe_name.strip("_.")
     return safe_name if safe_name else "unnamed_file"
 
 
@@ -281,9 +300,7 @@ def is_model_cached(model_size: str, cache_dir: Optional[str] = None) -> bool:
 
 
 async def get_whisper_model(
-    model_size: str,
-    device: str,
-    progress_callback: Optional[ProgressCallback] = None
+    model_size: str, device: str, progress_callback: Optional[ProgressCallback] = None
 ) -> WhisperModel:
     """Load Whisper model from cache or create new instance.
 
@@ -314,22 +331,29 @@ async def get_whisper_model(
         use_local_only = is_model_cached(model_size, WHISPER_CACHE_DIR)
 
         if use_local_only:
-            logger.info(f"Loading Whisper model '{model_size}' on '{device}' from local cache (offline mode)")
+            logger.info(
+                f"Loading Whisper model '{model_size}' on '{device}' "
+                "from local cache (offline mode)"
+            )
             if progress_callback:
-                progress_callback("loading", f"Loading {model_size} on {device}...", 0.5)
+                progress_callback(
+                    "loading", f"Loading {model_size} on {device}...", 0.5
+                )
         else:
-            logger.info(f"Downloading Whisper model '{model_size}' on '{device}' to cache dir: {WHISPER_CACHE_DIR}")
+            logger.info(
+                f"Downloading Whisper model '{model_size}' on '{device}' "
+                f"to cache dir: {WHISPER_CACHE_DIR}"
+            )
             # Download files with progress tracking
             if progress_callback:
                 progress_callback("downloading", f"Downloading {model_size}...", 0)
             await asyncio.to_thread(
-                download_model_files,
-                model_size,
-                WHISPER_CACHE_DIR,
-                progress_callback
+                download_model_files, model_size, WHISPER_CACHE_DIR, progress_callback
             )
             if progress_callback:
-                progress_callback("loading", f"Loading {model_size} on {device}...", 0.9)
+                progress_callback(
+                    "loading", f"Loading {model_size} on {device}...", 0.9
+                )
 
         compute_type = "int8" if device == "cpu" else "int8_float16"
 
@@ -339,7 +363,7 @@ async def get_whisper_model(
             device=device,
             compute_type=compute_type,
             download_root=WHISPER_CACHE_DIR,
-            local_files_only=True  # Files are now guaranteed to be downloaded
+            local_files_only=True,  # Files are now guaranteed to be downloaded
         )
 
         model_cache[model_key] = model
@@ -374,9 +398,15 @@ def get_whisper_model_sync(model_size: str, device: str) -> WhisperModel:
         # Check if model is already cached to avoid network requests
         use_local_only = is_model_cached(model_size, WHISPER_CACHE_DIR)
         if use_local_only:
-            logger.info(f"Loading Whisper model '{model_size}' on '{device}' from local cache (offline mode)")
+            logger.info(
+                f"Loading Whisper model '{model_size}' on '{device}' "
+                "from local cache (offline mode)"
+            )
         else:
-            logger.info(f"Downloading Whisper model '{model_size}' on '{device}' to cache dir: {WHISPER_CACHE_DIR}")
+            logger.info(
+                f"Downloading Whisper model '{model_size}' on '{device}' "
+                f"to cache dir: {WHISPER_CACHE_DIR}"
+            )
 
         compute_type = "int8" if device == "cpu" else "int8_float16"
         model = WhisperModel(
@@ -384,7 +414,7 @@ def get_whisper_model_sync(model_size: str, device: str) -> WhisperModel:
             device=device,
             compute_type=compute_type,
             download_root=WHISPER_CACHE_DIR,
-            local_files_only=use_local_only
+            local_files_only=use_local_only,
         )
         model_cache[model_key] = model
         logger.info(f"Whisper model '{model_key}' loaded and cached.")

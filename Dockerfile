@@ -30,6 +30,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+# Create a non-root user
+RUN useradd -m -u 1000 appuser
+
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
 
@@ -42,11 +45,15 @@ WORKDIR /app
 COPY backend/ /app/backend/
 COPY frontend/ /app/frontend/
 
-# Create models_cache directory
-RUN mkdir -p /app/models_cache
+# Create models_cache directory and set permissions
+RUN mkdir -p /app/models_cache && \
+    chown -R appuser:appuser /app
 
 # Expose port
 EXPOSE 8000
+
+# Switch to non-root user
+USER appuser
 
 # Health check (httpx is installed in the main group)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \

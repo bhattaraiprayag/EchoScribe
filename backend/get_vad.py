@@ -15,7 +15,7 @@ def download_silero_vad() -> None:
             model="silero_vad",
             force_reload=True,
             onnx=True,
-            trust_repo=True
+            trust_repo=True,
         )
         print(f"Model downloaded successfully to '{VAD_CACHE_DIR}'.")
     except Exception as e:

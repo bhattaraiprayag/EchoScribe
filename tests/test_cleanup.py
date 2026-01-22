@@ -1,10 +1,8 @@
 # tests/test_cleanup.py
 """Tests for session and job cleanup functionality."""
 
-import asyncio
 import os
 import time
-import pytest
 from unittest.mock import MagicMock, patch
 
 
@@ -112,7 +110,7 @@ class TestCleanupManager:
 
     def test_cleanup_manager_removes_expired_sessions(self):
         """Expired sessions should be removed during cleanup."""
-        from cleanup import SessionInfo, CleanupManager
+        from cleanup import CleanupManager, SessionInfo
 
         manager = CleanupManager(session_ttl_seconds=60, job_retention_seconds=120)
 
@@ -133,7 +131,7 @@ class TestCleanupManager:
 
     def test_cleanup_manager_removes_expired_jobs(self):
         """Expired completed jobs should be removed during cleanup."""
-        from cleanup import JobInfo, CleanupManager
+        from cleanup import CleanupManager, JobInfo
 
         manager = CleanupManager(session_ttl_seconds=60, job_retention_seconds=60)
 
@@ -155,7 +153,7 @@ class TestCleanupManager:
 
     def test_cleanup_manager_keeps_in_progress_jobs(self):
         """In-progress jobs should never be removed regardless of age."""
-        from cleanup import JobInfo, CleanupManager
+        from cleanup import CleanupManager, JobInfo
 
         manager = CleanupManager(session_ttl_seconds=60, job_retention_seconds=60)
 
@@ -175,7 +173,8 @@ class TestCleanupManager:
         """Cleanup should remove associated temp files for expired sessions."""
         import os
         import tempfile
-        from cleanup import SessionInfo, CleanupManager
+
+        from cleanup import CleanupManager, SessionInfo
 
         manager = CleanupManager(session_ttl_seconds=60, job_retention_seconds=120)
 
@@ -222,12 +221,12 @@ class TestCleanupConfig:
         """Cleanup should read parameters from config.yaml."""
         from cleanup import get_cleanup_config
 
-        with patch('cleanup.get_config') as mock_config:
+        with patch("cleanup.get_config") as mock_config:
             mock_config.return_value = {
                 "cleanup_parameters": {
                     "session_ttl_minutes": 30,
                     "job_retention_minutes": 60,
-                    "cleanup_interval_seconds": 120
+                    "cleanup_interval_seconds": 120,
                 }
             }
 
@@ -244,7 +243,6 @@ class TestTempDirectoryManager:
     def test_get_temp_dir_creates_directory(self):
         """get_temp_dir should create the temp directory if it doesn't exist."""
         from cleanup import get_temp_dir
-        import shutil
 
         temp_dir = get_temp_dir()
         assert os.path.exists(temp_dir)
@@ -261,8 +259,7 @@ class TestTempDirectoryManager:
 
     def test_cleanup_orphaned_temp_files(self):
         """cleanup_orphaned_temp_files should remove old temp files."""
-        import tempfile
-        from cleanup import get_temp_dir, cleanup_orphaned_temp_files
+        from cleanup import cleanup_orphaned_temp_files, get_temp_dir
 
         temp_dir = get_temp_dir()
 
@@ -280,8 +277,7 @@ class TestTempDirectoryManager:
 
     def test_cleanup_orphaned_preserves_recent_files(self):
         """cleanup_orphaned_temp_files should preserve recent files."""
-        import tempfile
-        from cleanup import get_temp_dir, cleanup_orphaned_temp_files
+        from cleanup import cleanup_orphaned_temp_files, get_temp_dir
 
         temp_dir = get_temp_dir()
 

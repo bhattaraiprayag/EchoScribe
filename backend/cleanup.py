@@ -1,6 +1,5 @@
 """Session and job cleanup functionality with TTL support."""
 
-import atexit
 import logging
 import os
 import tempfile
@@ -9,7 +8,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from config_manager import get_config
-
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +114,7 @@ class JobInfo:
         return {
             "status": self.status,
             "result": self.result,
-            "cancelled": self.cancelled
+            "cancelled": self.cancelled,
         }
 
 
@@ -155,7 +153,8 @@ class CleanupManager:
         removed_jobs = []
 
         expired_session_ids = [
-            sid for sid, info in sessions.items()
+            sid
+            for sid, info in sessions.items()
             if info.is_expired(self.session_ttl_seconds)
         ]
 
@@ -166,7 +165,8 @@ class CleanupManager:
             logger.info(f"[{session_id}] Session expired and cleaned up")
 
         expired_job_ids = [
-            jid for jid, info in jobs.items()
+            jid
+            for jid, info in jobs.items()
             if info.is_expired(self.job_retention_seconds)
         ]
 
@@ -185,18 +185,16 @@ class CleanupManager:
         """
         try:
             session = session_info.session
-            if hasattr(session, 'temp_file') and session.temp_file:
+            if hasattr(session, "temp_file") and session.temp_file:
                 temp_path = session.temp_file.name
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
                     logger.info(
-                        f"[{session_info.session_id}] Temp file deleted: "
-                        f"{temp_path}"
+                        f"[{session_info.session_id}] Temp file deleted: {temp_path}"
                     )
         except Exception as e:
             logger.error(
-                f"[{session_info.session_id}] "
-                f"Error cleaning session resources: {e}"
+                f"[{session_info.session_id}] Error cleaning session resources: {e}"
             )
 
 
@@ -219,10 +217,7 @@ def get_temp_dir() -> str:
     return _temp_dir
 
 
-def cleanup_orphaned_temp_files(
-    temp_dir: str,
-    max_age_seconds: float = 3600
-) -> int:
+def cleanup_orphaned_temp_files(temp_dir: str, max_age_seconds: float = 3600) -> int:
     """Remove orphaned temp files older than max_age_seconds.
 
     Args:

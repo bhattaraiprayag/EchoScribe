@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import os
 import tempfile
 import time
 from asyncio import Queue
@@ -12,12 +11,10 @@ from typing import Any, Dict, Optional
 import ffmpeg
 import numpy as np
 import torch
-import torchaudio
 from config_manager import config_data
 from fastapi import WebSocketDisconnect
 from faster_whisper import WhisperModel
 from utils import VAD_CACHE_DIR
-
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -26,9 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def _calculate_audio_duration(
-    audio_bytes: bytes,
-    sample_rate: int,
-    sample_width: int
+    audio_bytes: bytes, sample_rate: int, sample_width: int
 ) -> float:
     """Calculate duration of audio data in seconds.
 
@@ -47,13 +42,7 @@ def _calculate_audio_duration(
 class TranscriptionSession:
     """Manages state and pipeline for single WebSocket connection."""
 
-    def __init__(
-        self,
-        session_id: str,
-        websocket,
-        config: Dict,
-        whisper_model
-    ):
+    def __init__(self, session_id: str, websocket, config: Dict, whisper_model):
         """Initialize transcription session.
 
         Args:
@@ -88,11 +77,7 @@ class TranscriptionSession:
         self.cumulative_audio_duration: float = 0.0
         logger.info(f"[{session_id}] New session created with config: {config}")
 
-    def _update_transcription_context(
-        self,
-        new_text: str,
-        max_length: int
-    ) -> None:
+    def _update_transcription_context(self, new_text: str, max_length: int) -> None:
         """Update transcription context with new text.
 
         Args:
@@ -111,12 +96,11 @@ class TranscriptionSession:
 
         if len(self.transcription_context) > max_length:
             trimmed = self.transcription_context[-max_length:]
-            first_space = trimmed.find(' ')
+            first_space = trimmed.find(" ")
             if first_space > 0 and first_space < len(trimmed) - 1:
-                self.transcription_context = trimmed[first_space + 1:]
+                self.transcription_context = trimmed[first_space + 1 :]
             else:
                 self.transcription_context = trimmed
-
 
     def load_vad_model(self):
         """Load Silero VAD model from cache.
@@ -148,7 +132,6 @@ class TranscriptionSession:
             logger.error(f"Failed to load Silero VAD model: {e}")
             raise
 
-
     def load_whisper_model(self):
         """Load Faster Whisper model based on session config.
 
@@ -162,8 +145,7 @@ class TranscriptionSession:
         device = self.config.get("device", "cpu")
         compute_type = "int8" if device == "cpu" else "int8_float16"
         logger.info(
-            f"[{self.session_id}] Loading Whisper model "
-            f"'{model_size}' on '{device}'..."
+            f"[{self.session_id}] Loading Whisper model '{model_size}' on '{device}'..."
         )
         try:
             model = WhisperModel(model_size, device=device, compute_type=compute_type)
@@ -172,7 +154,6 @@ class TranscriptionSession:
         except Exception as e:
             logger.error(f"Failed to load Whisper model: {e}")
             raise
-
 
     async def run_pipeline(self) -> None:
         """Run all pipeline tasks concurrently."""
@@ -200,7 +181,6 @@ class TranscriptionSession:
             torch.cuda.empty_cache()
         logger.info(f"[{self.session_id}] Session resources cleaned up.")
 
-
     async def websocket_ingestion_task(self) -> None:
         """Receive raw audio from client and queue it."""
         logger.info(f"[{self.session_id}] Starting WebSocket ingestion task.")
@@ -218,7 +198,6 @@ class TranscriptionSession:
                 logger.warning(f"[{self.session_id}] Ingestion task stopped: {e}")
                 break
         await self.raw_audio_queue.put(None)
-
 
     async def vad_chunking_task(self) -> None:
         """Consume raw audio, run VAD, and chunk into utterances."""
@@ -239,7 +218,8 @@ class TranscriptionSession:
             if audio_chunk is None:
                 if self.batch_buffer:
                     logger.info(
-                        f"[{self.session_id}] End of stream, processing batched utterances."
+                        f"[{self.session_id}] End of stream, processing "
+                        "batched utterances."
                     )
                     await self.transcription_queue.put(
                         {"audio": bytes(self.batch_buffer), "type": "final"}
@@ -247,7 +227,8 @@ class TranscriptionSession:
                     self.batch_buffer.clear()
                 if self.utterance_buffer:
                     logger.info(
-                        f"[{self.session_id}] End of stream, processing final utterance."
+                        f"[{self.session_id}] End of stream, processing "
+                        "final utterance."
                     )
                     await self.transcription_queue.put(
                         {"audio": bytes(self.utterance_buffer), "type": "final"}
@@ -292,7 +273,9 @@ class TranscriptionSession:
                             and speech_duration > vad_min_speech_duration
                         ):
                             logger.info(
-                                f"[{self.session_id}] End of utterance detected (speech: {speech_duration:.2f}s, silence: {silence_elapsed:.2f}s)."
+                                f"[{self.session_id}] End of utterance detected "
+                                f"(speech: {speech_duration:.2f}s, "
+                                f"silence: {silence_elapsed:.2f}s)."
                             )
 
                             utterance_audio = bytes(self.utterance_buffer)
@@ -300,13 +283,15 @@ class TranscriptionSession:
                                 utterance_audio, audio_sample_rate, audio_sample_width
                             )
 
-                            if (batch_short_utterances and
-                                utterance_duration < batch_min_duration):
+                            if (
+                                batch_short_utterances
+                                and utterance_duration < batch_min_duration
+                            ):
                                 self.batch_buffer.extend(utterance_audio)
                                 batch_duration = _calculate_audio_duration(
                                     bytes(self.batch_buffer),
                                     audio_sample_rate,
-                                    audio_sample_width
+                                    audio_sample_width,
                                 )
                                 logger.info(
                                     f"[{self.session_id}] Batching short utterance "
@@ -322,7 +307,7 @@ class TranscriptionSession:
                                     await self.transcription_queue.put(
                                         {
                                             "audio": bytes(self.batch_buffer),
-                                            "type": "final"
+                                            "type": "final",
                                         }
                                     )
                                     self.batch_buffer.clear()
@@ -331,7 +316,7 @@ class TranscriptionSession:
                                     batch_duration = _calculate_audio_duration(
                                         bytes(self.batch_buffer),
                                         audio_sample_rate,
-                                        audio_sample_width
+                                        audio_sample_width,
                                     )
                                     logger.info(
                                         f"[{self.session_id}] Flushing batch buffer "
@@ -341,7 +326,7 @@ class TranscriptionSession:
                                     await self.transcription_queue.put(
                                         {
                                             "audio": bytes(self.batch_buffer),
-                                            "type": "final"
+                                            "type": "final",
                                         }
                                     )
                                     self.batch_buffer.clear()
@@ -359,7 +344,8 @@ class TranscriptionSession:
                 current_time = time.time()
                 if current_time - self.last_interim_time > self.interim_interval:
                     logger.info(
-                        f"[{self.session_id}] Sending interim utterance for transcription."
+                        f"[{self.session_id}] Sending interim utterance "
+                        "for transcription."
                     )
                     await self.transcription_queue.put(
                         {"audio": bytes(self.utterance_buffer), "type": "interim"}
@@ -367,15 +353,13 @@ class TranscriptionSession:
                     self.last_interim_time = current_time
         await self.transcription_queue.put(None)
 
-
     async def whisper_worker_task(self) -> None:
         """Consume audio utterances and transcribe using Whisper."""
         logger.info(f"[{self.session_id}] Starting Whisper worker task.")
         language = self.config.get("language", "en")
         context_max_length = self.transcription_params.get("context_max_length", 224)
         word_timestamps_enabled = self.transcription_params.get(
-            "word_timestamps",
-            False
+            "word_timestamps", False
         )
         audio_sample_rate = self.audio_params.get("sample_rate", 16000)
         audio_sample_width = self.audio_params.get("sample_width", 2)
@@ -411,9 +395,7 @@ class TranscriptionSession:
                 )
 
                 segment_list = list(segments)
-                transcription_text = (
-                    "".join([seg.text for seg in segment_list]).strip()
-                )
+                transcription_text = "".join([seg.text for seg in segment_list]).strip()
 
                 if transcription_text:
                     logger.info(
@@ -423,20 +405,17 @@ class TranscriptionSession:
 
                     if word_timestamps_enabled:
                         for segment in segment_list:
-                            if hasattr(segment, 'words') and segment.words:
+                            if hasattr(segment, "words") and segment.words:
                                 for word in segment.words:
                                     word_result = {
                                         "text": word.word.strip(),
                                         "type": "word",
                                         "start": round(
-                                            self.cumulative_audio_duration +
-                                            word.start,
-                                            2
+                                            self.cumulative_audio_duration + word.start,
+                                            2,
                                         ),
                                         "end": round(
-                                            self.cumulative_audio_duration +
-                                            word.end,
-                                            2
+                                            self.cumulative_audio_duration + word.end, 2
                                         ),
                                     }
                                     await self.results_queue.put(word_result)
@@ -447,14 +426,8 @@ class TranscriptionSession:
                     result = {
                         "text": transcription_text,
                         "type": task_type,
-                        "start": round(
-                            self.cumulative_audio_duration + start_time,
-                            2
-                        ),
-                        "end": round(
-                            self.cumulative_audio_duration + end_time,
-                            2
-                        ),
+                        "start": round(self.cumulative_audio_duration + start_time, 2),
+                        "end": round(self.cumulative_audio_duration + end_time, 2),
                     }
                     await self.results_queue.put(result)
 
@@ -472,7 +445,6 @@ class TranscriptionSession:
                     exc_info=True,
                 )
         await self.results_queue.put(None)
-
 
     async def websocket_emitter_task(self) -> None:
         """Send transcription results back to client."""

@@ -2,11 +2,11 @@
 """Tests for model cache concurrency safety."""
 
 import asyncio
-import os
 import tempfile
-import pytest
 from pathlib import Path
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 pytestmark = pytest.mark.asyncio
 
@@ -16,7 +16,7 @@ class TestIsModelCached:
 
     def test_cached_model_returns_true(self):
         """is_model_cached should return True when model exists with model.bin."""
-        from utils import is_model_cached, MODEL_REPO_MAP
+        from utils import is_model_cached
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create proper cache structure for distil-large-v3
@@ -74,9 +74,18 @@ class TestIsModelCached:
         """All standard Whisper model sizes should have repo mappings."""
         from utils import MODEL_REPO_MAP
 
-        standard_models = ["tiny", "base", "small", "medium", "large-v3", "distil-large-v3"]
+        standard_models = [
+            "tiny",
+            "base",
+            "small",
+            "medium",
+            "large-v3",
+            "distil-large-v3",
+        ]
         for model in standard_models:
-            assert model in MODEL_REPO_MAP, f"Model '{model}' missing from MODEL_REPO_MAP"
+            assert model in MODEL_REPO_MAP, (
+                f"Model '{model}' missing from MODEL_REPO_MAP"
+            )
 
 
 class TestModelCacheLocking:
@@ -84,16 +93,18 @@ class TestModelCacheLocking:
 
     async def test_get_whisper_model_returns_model(self):
         """get_whisper_model should return a WhisperModel instance."""
-        from utils import get_whisper_model, model_cache, model_cache_lock
+        from utils import get_whisper_model, model_cache
 
         # Clear cache
         model_cache.clear()
 
         # Mock WhisperModel, is_model_cached, and download_model_files
         mock_model = MagicMock()
-        with patch('utils.WhisperModel', return_value=mock_model), \
-             patch('utils.is_model_cached', return_value=False), \
-             patch('utils.download_model_files', return_value='/mock/path'):
+        with (
+            patch("utils.WhisperModel", return_value=mock_model),
+            patch("utils.is_model_cached", return_value=False),
+            patch("utils.download_model_files", return_value="/mock/path"),
+        ):
             result = await get_whisper_model("tiny", "cpu")
             assert result == mock_model
 
@@ -104,9 +115,11 @@ class TestModelCacheLocking:
         model_cache.clear()
 
         mock_model = MagicMock()
-        with patch('utils.WhisperModel', return_value=mock_model) as mock_class, \
-             patch('utils.is_model_cached', return_value=False), \
-             patch('utils.download_model_files', return_value='/mock/path'):
+        with (
+            patch("utils.WhisperModel", return_value=mock_model) as mock_class,
+            patch("utils.is_model_cached", return_value=False),
+            patch("utils.download_model_files", return_value="/mock/path"),
+        ):
             # First call
             result1 = await get_whisper_model("tiny", "cpu")
             # Second call
@@ -131,9 +144,11 @@ class TestModelCacheLocking:
             else:
                 return mock_model_base
 
-        with patch('utils.WhisperModel', side_effect=create_model), \
-             patch('utils.is_model_cached', return_value=False), \
-             patch('utils.download_model_files', return_value='/mock/path'):
+        with (
+            patch("utils.WhisperModel", side_effect=create_model),
+            patch("utils.is_model_cached", return_value=False),
+            patch("utils.download_model_files", return_value="/mock/path"),
+        ):
             result_tiny = await get_whisper_model("tiny", "cpu")
             result_base = await get_whisper_model("base", "cpu")
 
@@ -149,7 +164,6 @@ class TestModelCacheLocking:
 
         load_count = 0
         load_started = asyncio.Event()
-        load_can_complete = asyncio.Event()
 
         def slow_load(*args, **kwargs):
             nonlocal load_count
@@ -157,9 +171,11 @@ class TestModelCacheLocking:
             load_started.set()
             return MagicMock()
 
-        with patch('utils.WhisperModel', side_effect=slow_load), \
-             patch('utils.is_model_cached', return_value=False), \
-             patch('utils.download_model_files', return_value='/mock/path'):
+        with (
+            patch("utils.WhisperModel", side_effect=slow_load),
+            patch("utils.is_model_cached", return_value=False),
+            patch("utils.download_model_files", return_value="/mock/path"),
+        ):
             # Start multiple concurrent requests
             tasks = [
                 get_whisper_model("tiny", "cpu"),
@@ -187,27 +203,31 @@ class TestModelCacheLocking:
 
         model_cache.clear()
 
-        with patch('utils.WhisperModel') as mock_class, \
-             patch('utils.is_model_cached', return_value=False), \
-             patch('utils.download_model_files', return_value='/mock/path'):
+        with (
+            patch("utils.WhisperModel") as mock_class,
+            patch("utils.is_model_cached", return_value=False),
+            patch("utils.download_model_files", return_value="/mock/path"),
+        ):
             mock_class.return_value = MagicMock()
 
             # Test CPU compute type
             await get_whisper_model("tiny", "cpu")
             call_kwargs = mock_class.call_args
-            assert call_kwargs.kwargs.get('compute_type') == "int8"
+            assert call_kwargs.kwargs.get("compute_type") == "int8"
 
         model_cache.clear()
 
-        with patch('utils.WhisperModel') as mock_class, \
-             patch('utils.is_model_cached', return_value=False), \
-             patch('utils.download_model_files', return_value='/mock/path'):
+        with (
+            patch("utils.WhisperModel") as mock_class,
+            patch("utils.is_model_cached", return_value=False),
+            patch("utils.download_model_files", return_value="/mock/path"),
+        ):
             mock_class.return_value = MagicMock()
 
             # Test CUDA compute type
             await get_whisper_model("tiny", "cuda")
             call_kwargs = mock_class.call_args
-            assert call_kwargs.kwargs.get('compute_type') == "int8_float16"
+            assert call_kwargs.kwargs.get("compute_type") == "int8_float16"
 
     async def test_get_whisper_model_uses_local_files_only_when_cached(self):
         """When model is cached, local_files_only should be True."""
@@ -215,23 +235,30 @@ class TestModelCacheLocking:
 
         model_cache.clear()
 
-        with patch('utils.WhisperModel') as mock_class, \
-             patch('utils.is_model_cached', return_value=True):
+        with (
+            patch("utils.WhisperModel") as mock_class,
+            patch("utils.is_model_cached", return_value=True),
+        ):
             mock_class.return_value = MagicMock()
 
             await get_whisper_model("tiny", "cpu")
             call_kwargs = mock_class.call_args
-            assert call_kwargs.kwargs.get('local_files_only') is True
+            assert call_kwargs.kwargs.get("local_files_only") is True
 
     async def test_get_whisper_model_downloads_when_not_cached(self):
-        """When model is not cached, download_model_files is called first, then local_files_only=True."""
+        """When model is not cached, download_model_files is called first,
+        then local_files_only=True."""
         from utils import get_whisper_model, model_cache
 
         model_cache.clear()
 
-        with patch('utils.WhisperModel') as mock_class, \
-             patch('utils.is_model_cached', return_value=False), \
-             patch('utils.download_model_files', return_value='/mock/path') as mock_download:
+        with (
+            patch("utils.WhisperModel") as mock_class,
+            patch("utils.is_model_cached", return_value=False),
+            patch(
+                "utils.download_model_files", return_value="/mock/path"
+            ) as mock_download,
+        ):
             mock_class.return_value = MagicMock()
 
             await get_whisper_model("tiny", "cpu")
@@ -241,7 +268,7 @@ class TestModelCacheLocking:
 
             # After download, local_files_only should be True
             call_kwargs = mock_class.call_args
-            assert call_kwargs.kwargs.get('local_files_only') is True
+            assert call_kwargs.kwargs.get("local_files_only") is True
 
 
 class TestGetModelStatus:
@@ -284,7 +311,7 @@ class TestGetModelStatus:
 
     def test_get_model_status_returns_repo_id(self):
         """get_model_status should include repo_id in response."""
-        from utils import get_model_status, MODEL_REPO_MAP
+        from utils import MODEL_REPO_MAP, get_model_status
 
         status = get_model_status("base")
         assert "repo_id" in status
@@ -292,7 +319,7 @@ class TestGetModelStatus:
 
     def test_get_model_status_partial_cache(self):
         """get_model_status should report missing files correctly."""
-        from utils import get_model_status, REQUIRED_MODEL_FILES
+        from utils import get_model_status
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create cache with only some files
@@ -333,10 +360,12 @@ class TestDownloadModelFiles:
 
     def test_download_model_files_calls_hf_hub_download(self):
         """download_model_files should call hf_hub_download for each required file."""
-        from utils import download_model_files, REQUIRED_MODEL_FILES
+        from utils import REQUIRED_MODEL_FILES, download_model_files
 
-        with patch('utils.hf_hub_download') as mock_download, \
-             patch('utils.HfFileSystem') as mock_fs:
+        with (
+            patch("utils.hf_hub_download") as mock_download,
+            patch("utils.HfFileSystem") as mock_fs,
+        ):
             mock_download.return_value = "/mock/path/model.bin"
             mock_fs_instance = MagicMock()
             mock_fs_instance.info.return_value = {"size": 1000}
@@ -356,8 +385,10 @@ class TestDownloadModelFiles:
         def callback(status, message, progress):
             progress_calls.append((status, message, progress))
 
-        with patch('utils.hf_hub_download') as mock_download, \
-             patch('utils.HfFileSystem') as mock_fs:
+        with (
+            patch("utils.hf_hub_download") as mock_download,
+            patch("utils.HfFileSystem") as mock_fs,
+        ):
             mock_download.return_value = "/mock/path/file"
             mock_fs_instance = MagicMock()
             mock_fs_instance.info.return_value = {"size": 1000}
@@ -381,8 +412,10 @@ class TestDownloadModelFiles:
         """download_model_files should return the model directory path."""
         from utils import download_model_files
 
-        with patch('utils.hf_hub_download') as mock_download, \
-             patch('utils.HfFileSystem') as mock_fs:
+        with (
+            patch("utils.hf_hub_download") as mock_download,
+            patch("utils.HfFileSystem") as mock_fs,
+        ):
             mock_download.return_value = "/cache/models/snapshots/abc/model.bin"
             mock_fs_instance = MagicMock()
             mock_fs_instance.info.return_value = {"size": 1000}
@@ -399,15 +432,17 @@ class TestSyncModelCacheLocking:
 
     def test_sync_model_cache_lock_exists(self):
         """sync_model_cache_lock should be a threading.Lock."""
-        from utils import sync_model_cache_lock
         import threading
+
+        from utils import sync_model_cache_lock
 
         assert isinstance(sync_model_cache_lock, type(threading.Lock()))
 
     def test_get_whisper_model_sync_uses_lock(self):
         """get_whisper_model_sync should use lock to prevent race conditions."""
-        from utils import get_whisper_model_sync, model_cache, sync_model_cache_lock
         import threading
+
+        from utils import get_whisper_model_sync, model_cache
 
         model_cache.clear()
         load_count = 0
@@ -419,11 +454,14 @@ class TestSyncModelCacheLocking:
                 load_count += 1
             # Simulate slow loading
             import time
+
             time.sleep(0.1)
             return MagicMock()
 
-        with patch('utils.WhisperModel', side_effect=slow_load), \
-             patch('utils.is_model_cached', return_value=True):
+        with (
+            patch("utils.WhisperModel", side_effect=slow_load),
+            patch("utils.is_model_cached", return_value=True),
+        ):
             # Start multiple concurrent threads
             threads = []
             results = []
@@ -466,8 +504,10 @@ class TestProgressCallback:
         def callback(status, message, progress):
             progress_calls.append((status, message, progress))
 
-        with patch('utils.WhisperModel') as mock_class, \
-             patch('utils.is_model_cached', return_value=True):
+        with (
+            patch("utils.WhisperModel") as mock_class,
+            patch("utils.is_model_cached", return_value=True),
+        ):
             mock_class.return_value = MagicMock()
 
             await get_whisper_model("tiny", "cpu", callback)
@@ -485,8 +525,10 @@ class TestProgressCallback:
         def callback(status, message, progress):
             progress_calls.append((status, message, progress))
 
-        with patch('utils.WhisperModel') as mock_class, \
-             patch('utils.is_model_cached', return_value=True):
+        with (
+            patch("utils.WhisperModel") as mock_class,
+            patch("utils.is_model_cached", return_value=True),
+        ):
             mock_class.return_value = MagicMock()
 
             await get_whisper_model("tiny", "cpu", callback)

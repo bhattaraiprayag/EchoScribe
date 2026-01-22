@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Maintain dependencies for GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Maintain dependencies for pip (using internal uv management if supported, otherwise pip requirements)
+  # Dependabot has limited direct support for uv, but works with pyproject.toml
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      dependencies:
+        patterns:
+          - "*"

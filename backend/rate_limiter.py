@@ -48,9 +48,7 @@ class RateLimiter:
             current_time: Current timestamp.
         """
         cutoff = current_time - self.window_size
-        self._requests[ip] = [
-            ts for ts in self._requests[ip] if ts > cutoff
-        ]
+        self._requests[ip] = [ts for ts in self._requests[ip] if ts > cutoff]
 
     def cleanup_stale_ips(self) -> int:
         """Remove IPs that have no recent requests to prevent memory leaks.
@@ -141,7 +139,7 @@ class RateLimiter:
             raise HTTPException(
                 status_code=429,
                 detail="Rate limit exceeded. Please try again later.",
-                headers={"Retry-After": str(self.window_size)}
+                headers={"Retry-After": str(self.window_size)},
             )
         self.record_request(request)
 

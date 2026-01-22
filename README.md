@@ -8,32 +8,33 @@ EchoScribe is a high-performance, self-hosted web application for both **real-ti
 The interface allows you to select different Whisper models, choose your compute device (CPU or CUDA-enabled GPU), and fine-tune VAD parameters for optimal performance.
 
 ## 🎬 Demo
+
 Here’s a quick look at how to use EchoScribe's real-time and batch transcription features.
 
 ![EchoScribe Application Demo](demo.gif)
 
 ## ✨ Features
 
--   **🎙️ Real-time Transcription:** Speak into your microphone and see the transcription appear live
--   **📂 Batch Processing:** Upload audio files and get the full transcription in the sidebar
--   **🚀 High Performance:** Uses `faster-whisper` for optimized CTranslate2-based inference
--   **🗣️ Voice Activity Detection (VAD):** Smartly chunks audio using Silero VAD to transcribe only when speech is detected, improving accuracy and reducing processing
--   **⚙️ Configurable:**
-    -   Choose from various Whisper models (from `tiny` to `large-v3` and `distil-large-v3`)
-    -   Select compute device (`CPU` or `CUDA`)
-    -   Adjust VAD parameters like silence duration and speech probability threshold
-    -   Configure API key authentication for secure access
-    -   Set rate limiting for API endpoints and file uploads
-    -   Customize session TTL and cleanup intervals
--   **🔒 Security Features:**
-    -   Optional API key authentication with environment variable support
-    -   Request rate limiting per IP address
-    -   File validation and path traversal protection
-    -   Secure constant-time string comparison for authentication
--   **💾 Download Recordings:** After a real-time session, download your recording as an MP3 file
--   **📝 Export Transcripts:** Easily copy the transcript or download it as a `.txt` file
--   **🌐 Modern UI:** Clean and intuitive interface built with Tailwind CSS
--   **🧪 Well-Tested:** Comprehensive test suite with 105+ tests covering all major functionality
+- **🎙️ Real-time Transcription:** Speak into your microphone and see the transcription appear live
+- **📂 Batch Processing:** Upload audio files and get the full transcription in the sidebar
+- **🚀 High Performance:** Uses `faster-whisper` for optimized CTranslate2-based inference
+- **🗣️ Voice Activity Detection (VAD):** Smartly chunks audio using Silero VAD to transcribe only when speech is detected, improving accuracy and reducing processing
+- **⚙️ Configurable:**
+  - Choose from various Whisper models (from `tiny` to `large-v3` and `distil-large-v3`)
+  - Select compute device (`CPU` or `CUDA`)
+  - Adjust VAD parameters like silence duration and speech probability threshold
+  - Configure API key authentication for secure access
+  - Set rate limiting for API endpoints and file uploads
+  - Customize session TTL and cleanup intervals
+- **🔒 Security Features:**
+  - Optional API key authentication with environment variable support
+  - Request rate limiting per IP address
+  - File validation and path traversal protection
+  - Secure constant-time string comparison for authentication
+- **💾 Download Recordings:** After a real-time session, download your recording as an MP3 file
+- **📝 Export Transcripts:** Easily copy the transcript or download it as a `.txt` file
+- **🌐 Modern UI:** Clean and intuitive interface built with Tailwind CSS
+- **🧪 Well-Tested:** Comprehensive test suite with 105+ tests covering all major functionality
 
 ## ⚡ How It Works
 
@@ -69,11 +70,11 @@ graph TD
 - **WebSocket Connection**: These raw audio chunks are sent to the backend over a persistent WebSocket connection.
 
 - **Backend Pipeline**:
-    1. **Ingestion**: The server receives the audio chunks and places them into a raw audio queue.
-    2. **VAD Chunking**: A dedicated task pulls from this queue and uses the Silero VAD model to detect speech. It buffers audio until it detects a pause (end of an utterance).
-    3. **Transcription**: Once a complete utterance is buffered, it's sent to the transcription queue. A worker task picks it up and transcribes it using the selected faster-whisper model.
-    4. **Emitter**: The resulting text is placed in a results queue. Another task sends this text back to the client over the same WebSocket.
-    5. **UI Update**: The client receives the transcribed text and updates the user interface in real-time.
+  1. **Ingestion**: The server receives the audio chunks and places them into a raw audio queue.
+  2. **VAD Chunking**: A dedicated task pulls from this queue and uses the Silero VAD model to detect speech. It buffers audio until it detects a pause (end of an utterance).
+  3. **Transcription**: Once a complete utterance is buffered, it's sent to the transcription queue. A worker task picks it up and transcribes it using the selected faster-whisper model.
+  4. **Emitter**: The resulting text is placed in a results queue. Another task sends this text back to the client over the same WebSocket.
+  5. **UI Update**: The client receives the transcribed text and updates the user interface in real-time.
 
 ### Batch Transcription API Flow
 
@@ -104,6 +105,7 @@ sequenceDiagram
 ```
 
 ### API Endpoints
+
 The application exposes several RESTful and WebSocket endpoints to power the frontend.
 | Method | Path | Description |
 | :--- | :--- | :--- |
@@ -121,58 +123,64 @@ The application exposes several RESTful and WebSocket endpoints to power the fro
 ## 🏁 Getting Started
 
 ### ⚠️ Important Compatibility Note
+
 **Apple Silicon (M1/M2/M3) is NOT supported for GPU acceleration**.
 Mac users should select the `cpu` device. The application will default to CPU on macOS.
 
 ### 🎯 Prerequisites
+
 - **Python**: Version 3.11+ is recommended.
 - **Git**: To clone the repository.
 - **uv**: A fast Python package installer and resolver. [Install uv](https://docs.astral.sh/uv/getting-started/installation/).
 - **FFmpeg**: This is a system dependency and must be installed separately.
-    - **Ubuntu/Debian**: `sudo apt update && sudo apt install ffmpeg`
-    - **macOS (with Homebrew)**: `brew install ffmpeg`
-    - **Windows**: Download from the [official site](https://ffmpeg.org/download.html) and add the bin directory to your system's PATH.
+  - **Ubuntu/Debian**: `sudo apt update && sudo apt install ffmpeg`
+  - **macOS (with Homebrew)**: `brew install ffmpeg`
+  - **Windows**: Download from the [official site](https://ffmpeg.org/download.html) and add the bin directory to your system's PATH.
 
 ### 🛠️ Installation
 
 1. **Clone the repository**:
-    ```sh
-    git clone https://github.com/bhattaraiprayag/echoscribe.git
-    cd echoscribe
-    ```
+
+   ```sh
+   git clone https://github.com/bhattaraiprayag/echoscribe.git
+   cd echoscribe
+   ```
 
 2. **Sync dependencies**:
-    EchoScribe uses `uv` for dependency management. This command creates a virtual environment and installs all dependencies (including hardware-optimized PyTorch versions).
-    ```sh
-    uv sync
-    ```
+   EchoScribe uses `uv` for dependency management. This command creates a virtual environment and installs all dependencies (including hardware-optimized PyTorch versions).
+
+   ```sh
+   uv sync
+   ```
 
 3. **Download the VAD model**:
-    The Silero VAD model is required for real-time transcription.
-    ```sh
-    uv run python backend/get_vad.py
-    ```
+   The Silero VAD model is required for real-time transcription.
+   ```sh
+   uv run python backend/get_vad.py
+   ```
 
 ## ▶️ Running the Application
 
 1. **Start the server**:
-    - For development (with auto-reloading):
-      ```sh
-      uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
-      ```
-    - For production:
-      ```sh
-      uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
-      ```
+
+   - For development (with auto-reloading):
+     ```sh
+     uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+     ```
+   - For production:
+     ```sh
+     uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
+     ```
 
 2. **Open the web interface**:
-    Open your browser and navigate to [http://localhost:8000](http://localhost:8000).
+   Open your browser and navigate to [http://localhost:8000](http://localhost:8000).
 
 ### 🐳 Docker Deployment
 
 EchoScribe can be deployed using Docker for easier setup and isolation.
 
 #### Prerequisites
+
 - **Docker**: Version 20.10+ recommended
 - **Docker Compose**: Version 2.0+ recommended
 - **NVIDIA Container Toolkit** (optional): Required for GPU acceleration in Docker
@@ -180,72 +188,78 @@ EchoScribe can be deployed using Docker for easier setup and isolation.
 #### Quick Start with Docker Compose
 
 1. **Clone and navigate to the repository**:
-    ```sh
-    git clone https://github.com/bhattaraiprayag/echoscribe.git
-    cd echoscribe
-    ```
+
+   ```sh
+   git clone https://github.com/bhattaraiprayag/echoscribe.git
+   cd echoscribe
+   ```
 
 2. **Start the application**:
-    ```sh
-    docker-compose up -d
-    ```
+
+   ```sh
+   docker-compose up -d
+   ```
 
 3. **Access the application**:
-    Open your browser and navigate to http://localhost:8000.
+   Open your browser and navigate to http://localhost:8000.
 
 4. **View logs**:
-    ```sh
-    docker-compose logs -f
-    ```
+
+   ```sh
+   docker-compose logs -f
+   ```
 
 5. **Stop the application**:
-    ```sh
-    docker-compose down
-    ```
+   ```sh
+   docker-compose down
+   ```
 
 #### GPU Support (NVIDIA)
 
 To enable GPU acceleration in Docker:
 
 1. **Install NVIDIA Container Toolkit**:
-    ```sh
-    # Ubuntu/Debian
-    distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
-    curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
-    curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
-    sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
-    sudo systemctl restart docker
-    ```
+
+   ```sh
+   # Ubuntu/Debian
+   distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+   curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+   curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+   sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+   sudo systemctl restart docker
+   ```
 
 2. **Modify `docker-compose.yml`** to enable GPU:
-    ```yaml
-    services:
-      echoscribe:
-        # ... existing config ...
-        deploy:
-          resources:
-            reservations:
-              devices:
-                - driver: nvidia
-                  count: 1
-                  capabilities: [gpu]
-    ```
+
+   ```yaml
+   services:
+     echoscribe:
+       # ... existing config ...
+       deploy:
+         resources:
+           reservations:
+             devices:
+               - driver: nvidia
+                 count: 1
+                 capabilities: [gpu]
+   ```
 
 3. **Verify GPU access**:
-    ```sh
-    docker-compose exec echoscribe nvidia-smi
-    ```
+   ```sh
+   docker-compose exec echoscribe nvidia-smi
+   ```
 
 #### Environment Variables
 
 Configure the application using environment variables:
 
-| Variable | Description | Default |
-| :--- | :--- | :--- |
-| `ECHOSCRIBE_API_KEY` | API key for authentication (overrides config) | (empty) |
-| `MODELS_CACHE_DIR` | Directory for model cache | `./models_cache` |
+| Variable             | Description                                   | Default          |
+| :------------------- | :-------------------------------------------- | :--------------- |
+| `ECHOSCRIBE_API_KEY` | API key for authentication (overrides config) | (empty)          |
+| `MODELS_CACHE_DIR`   | Directory for model cache                     | `./models_cache` |
 
 Example:
+
 ```sh
 ECHOSCRIBE_API_KEY=your-secret-key docker-compose up -d
 ```
@@ -253,6 +267,7 @@ ECHOSCRIBE_API_KEY=your-secret-key docker-compose up -d
 #### Persistent Storage
 
 The Docker setup uses volumes for persistent storage:
+
 - `models_cache`: Stores downloaded Whisper models (prevents re-download)
 
 ### 🧪 Running Tests
@@ -267,6 +282,7 @@ uv run pytest -k "test_auth"               # Run tests matching pattern
 ```
 
 **Test Coverage:**
+
 - API endpoint testing
 - Authentication and authorization
 - Rate limiting and security
@@ -284,28 +300,34 @@ You can adjust the default application behavior by editing the [backend/config.y
 ### Key Configuration Options
 
 **VAD Parameters:**
+
 - `prob_threshold` (0.1-0.9): Speech probability threshold (higher values are stricter, default: 0.8)
 - `silence_duration` (0.1-5.0s): Seconds of silence to trigger end of utterance (default: 0.7)
 - `min_speech_duration` (0.1-2.0s): Minimum speech segment length for transcription (default: 0.3)
 
 **Audio Parameters:**
+
 - `channels` (1-2): Number of audio channels (default: 1)
 - `sample_rate` (8000-48000Hz): Audio sample rate (default: 16000)
 - `sample_width` (1-4 bytes): Bytes per sample (default: 2)
 
 **Transcription Parameters:**
+
 - `context_max_length` (0-500): Maximum context length for Whisper to maintain continuity (default: 224)
 
 **Cleanup Parameters:**
+
 - `session_ttl_minutes` (1-1440): Session time-to-live in minutes (default: 60)
 - `job_retention_minutes` (1-1440): Completed job retention time (default: 120)
 - `cleanup_interval_seconds` (60-3600): Cleanup task interval (default: 300)
 
 **Authentication (Optional):**
+
 - `enabled` (true/false): Enable API key authentication (default: false)
 - `api_key`: Your API key (can be overridden with `ECHOSCRIBE_API_KEY` environment variable)
 
 **Rate Limiting:**
+
 - `enabled` (true/false): Enable rate limiting (default: true)
 - `requests_per_minute`: API requests per IP per minute (default: 100)
 - `uploads_per_minute`: File uploads per IP per minute (default: 10)
@@ -325,6 +347,7 @@ To enable authentication, set `auth.enabled: true` in `config.yaml` and provide 
 ## 🏗️ Architecture
 
 **Code Quality:**
+
 - PEP8 compliant codebase
 - Type annotations throughout
 - Comprehensive docstrings
@@ -333,6 +356,7 @@ To enable authentication, set `auth.enabled: true` in `config.yaml` and provide 
 - Async/await for non-blocking I/O
 
 **Pipeline Architecture:**
+
 - Multi-stage async pipeline for real-time processing
 - Queue-based communication between stages
 - VAD-based intelligent audio chunking
@@ -341,14 +365,7 @@ To enable authentication, set `auth.enabled: true` in `config.yaml` and provide 
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a pull request or open an issue.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Run tests (`pytest tests/ -v`)
-4. Commit your changes (`git commit -m 'Add amazing feature'`)
-5. Push to the branch (`git push origin feature/amazing-feature`)
-6. Open a Pull Request
+Contributions are welcome! Please read our [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests having strictly followed our DevOps hygiene and quality standards.
 
 ## 📜 License
 

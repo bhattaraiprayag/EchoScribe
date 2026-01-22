@@ -11,7 +11,6 @@ from typing import Any, Dict
 
 import yaml
 
-
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(CURRENT_DIR, "config.yaml")
 

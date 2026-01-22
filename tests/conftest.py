@@ -6,13 +6,15 @@ import sys
 import pytest
 import pytest_asyncio
 
-
 # Add backend directory to Python path for imports
-BACKEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backend")
+BACKEND_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backend"
+)
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 BASE_URL = "http://localhost:8000"
+
 
 @pytest.fixture(scope="session")
 def base_url():
@@ -28,11 +30,12 @@ def app():
     import unittest.mock as mock
 
     # Mock torch.hub.load to avoid loading actual VAD model during tests
-    with mock.patch('torch.hub.load') as mock_hub_load:
+    with mock.patch("torch.hub.load") as mock_hub_load:
         mock_hub_load.return_value = mock.MagicMock()
 
         # Import after patching
         from main import app as fastapi_app
+
         yield fastapi_app
 
 

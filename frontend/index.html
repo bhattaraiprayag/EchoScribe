@@ -1,733 +1,1028 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>EchoScribe - Realtime & Batch Transcription</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"
+      rel="stylesheet"
+    />
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
-        body { font-family: 'Inter', sans-serif; }
-        #transcript-container { min-height: 200px; max-height: 400px; }
-        #interim-transcript { color: #888; }
-        .pulse { animation: pulse-animation 1s infinite; }
-        @keyframes pulse-animation {
-            0% { transform: scale(1); opacity: 0.7; }
-            50% { transform: scale(1.1); opacity: 1; }
-            100% { transform: scale(1); opacity: 0.7; }
+      @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap");
+      body {
+        font-family: "Inter", sans-serif;
+      }
+      #transcript-container {
+        min-height: 200px;
+        max-height: 400px;
+      }
+      #interim-transcript {
+        color: #888;
+      }
+      .pulse {
+        animation: pulse-animation 1s infinite;
+      }
+      @keyframes pulse-animation {
+        0% {
+          transform: scale(1);
+          opacity: 0.7;
         }
-        .progress-bar {
-            height: 6px;
-            background-color: #e5e7eb;
-            border-radius: 3px;
-            overflow: hidden;
-            margin-top: 8px;
+        50% {
+          transform: scale(1.1);
+          opacity: 1;
         }
-        .progress-bar-fill {
-            height: 100%;
-            background-color: #3b82f6;
-            border-radius: 3px;
-            transition: width 0.3s ease;
+        100% {
+          transform: scale(1);
+          opacity: 0.7;
         }
-        .progress-bar-fill.downloading { background-color: #f59e0b; }
-        .progress-bar-fill.loading { background-color: #3b82f6; }
-        .progress-bar-fill.ready { background-color: #10b981; }
+      }
+      .progress-bar {
+        height: 6px;
+        background-color: #e5e7eb;
+        border-radius: 3px;
+        overflow: hidden;
+        margin-top: 8px;
+      }
+      .progress-bar-fill {
+        height: 100%;
+        background-color: #3b82f6;
+        border-radius: 3px;
+        transition: width 0.3s ease;
+      }
+      .progress-bar-fill.downloading {
+        background-color: #f59e0b;
+      }
+      .progress-bar-fill.loading {
+        background-color: #3b82f6;
+      }
+      .progress-bar-fill.ready {
+        background-color: #10b981;
+      }
     </style>
-</head>
-<body class="bg-gray-100 text-gray-800 flex h-screen">
-
+  </head>
+  <body class="bg-gray-100 text-gray-800 flex h-screen">
     <aside class="w-2/5 bg-white p-6 border-r border-gray-200 flex flex-col">
-        <h2 class="text-2xl font-bold mb-4">Batch Transcription</h2>
-        <div class="border rounded-lg p-4">
-            <label for="file-upload" class="block text-sm font-medium text-gray-700 mb-2">Upload Audio Files</label>
-            <input id="file-upload" type="file" multiple accept="audio/*,video/*" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
-            <p id="files-selected" class="text-xs text-gray-500 mt-1"></p>
-            <button id="upload-button" class="mt-4 w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition-all duration-300 ease-in-out disabled:bg-gray-400">
-                Start Transcription
-            </button>
-        </div>
-        <h3 class="text-lg font-semibold mt-6 mb-2">Job Queue</h3>
-        <div id="job-status-container" class="space-y-3 overflow-y-auto flex-1">
-        </div>
+      <h2 class="text-2xl font-bold mb-4">Batch Transcription</h2>
+      <div class="border rounded-lg p-4">
+        <label
+          for="file-upload"
+          class="block text-sm font-medium text-gray-700 mb-2"
+          >Upload Audio Files</label
+        >
+        <input
+          id="file-upload"
+          type="file"
+          multiple
+          accept="audio/*,video/*"
+          class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+        />
+        <p id="files-selected" class="text-xs text-gray-500 mt-1"></p>
+        <button
+          id="upload-button"
+          class="mt-4 w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition-all duration-300 ease-in-out disabled:bg-gray-400"
+        >
+          Start Transcription
+        </button>
+      </div>
+      <h3 class="text-lg font-semibold mt-6 mb-2">Job Queue</h3>
+      <div
+        id="job-status-container"
+        class="space-y-3 overflow-y-auto flex-1"
+      ></div>
     </aside>
 
     <main class="flex-1 p-8 md:p-12 flex flex-col">
-        <div class="flex justify-between items-center mb-6">
-            <div>
-                <h1 class="text-4xl font-bold text-gray-800">EchoScribe</h1>
-                <p class="text-gray-500">Realtime Transcription & Audio Processing</p>
-            </div>
-            <button id="settings-button" class="text-gray-500 hover:text-gray-800">
-                <i class="fas fa-cog fa-2x"></i>
-            </button>
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h1 class="text-4xl font-bold text-gray-800">EchoScribe</h1>
+          <p class="text-gray-500">Realtime Transcription & Audio Processing</p>
+        </div>
+        <button id="settings-button" class="text-gray-500 hover:text-gray-800">
+          <i class="fas fa-cog fa-2x"></i>
+        </button>
+      </div>
+
+      <div
+        class="bg-white rounded-xl shadow-lg p-8 w-full flex-1 flex flex-col"
+      >
+        <div
+          class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 bg-gray-50 p-4 rounded-lg"
+        >
+          <div>
+            <label
+              for="model-select"
+              class="block text-sm font-medium text-gray-700"
+              >Whisper Model</label
+            >
+            <select
+              id="model-select"
+              class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+            ></select>
+          </div>
+          <div>
+            <label
+              for="device-select"
+              class="block text-sm font-medium text-gray-700"
+              >Compute Device</label
+            >
+            <select
+              id="device-select"
+              class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+            ></select>
+          </div>
+          <div>
+            <label
+              for="language-select"
+              class="block text-sm font-medium text-gray-700"
+              >Language</label
+            >
+            <select
+              id="language-select"
+              class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+            ></select>
+          </div>
         </div>
 
-        <div class="bg-white rounded-xl shadow-lg p-8 w-full flex-1 flex flex-col">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 bg-gray-50 p-4 rounded-lg">
-                <div>
-                    <label for="model-select" class="block text-sm font-medium text-gray-700">Whisper Model</label>
-                    <select id="model-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"></select>
-                </div>
-                <div>
-                    <label for="device-select" class="block text-sm font-medium text-gray-700">Compute Device</label>
-                    <select id="device-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"></select>
-                </div>
-                 <div>
-                    <label for="language-select" class="block text-sm font-medium text-gray-700">Language</label>
-                    <select id="language-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"></select>
-                </div>
-            </div>
-
-            <div class="flex items-center justify-center space-x-6 mb-6">
-                <button id="startButton" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105 disabled:bg-gray-400">Start Recording</button>
-                <canvas id="waveform-canvas" width="120" height="40" class="bg-gray-200 rounded-lg"></canvas>
-                <button id="stopButton" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105 disabled:bg-gray-400" disabled>Stop Recording</button>
-            </div>
-            <div class="text-center mb-6">
-                <p class="text-lg text-gray-700"><strong>Status:</strong> <span id="status">Loading...</span></p>
-                <div id="progress-container" class="max-w-md mx-auto hidden">
-                    <div class="progress-bar">
-                        <div id="progress-bar-fill" class="progress-bar-fill" style="width: 0%"></div>
-                    </div>
-                    <p id="progress-text" class="text-xs text-gray-500 mt-1"></p>
-                </div>
-            </div>
-
-            <div class="w-full bg-gray-50 rounded-lg p-4 border border-gray-200 flex-1 overflow-y-auto">
-                <div class="flex justify-between items-center mb-2">
-                    <h2 class="text-xl font-semibold text-gray-800">Transcript</h2>
-                    <div class="flex space-x-2">
-                        <button id="copy-button" class="px-3 py-1 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Copy</button>
-                        <button id="download-txt-button" class="px-3 py-1 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Download .txt</button>
-                        <button id="edit-button" class="px-3 py-1 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm">Edit</button>
-                    </div>
-                </div>
-                <div id="transcript-container" class="text-left text-gray-800 whitespace-pre-wrap">
-                    <span id="final-transcript"></span><span id="interim-transcript"></span>
-                </div>
-                <div id="edit-hint" class="text-xs text-gray-500 mt-1 hidden">Editing mode active. Click outside or press Escape to exit.</div>
-            </div>
-            
-            <div id="download-container" class="text-center mt-6 hidden">
-                <a id="downloadLink" class="inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg">Download Recording (MP3)</a>
-            </div>
+        <div class="flex items-center justify-center space-x-6 mb-6">
+          <button
+            id="startButton"
+            class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105 disabled:bg-gray-400"
+          >
+            Start Recording
+          </button>
+          <canvas
+            id="waveform-canvas"
+            width="120"
+            height="40"
+            class="bg-gray-200 rounded-lg"
+          ></canvas>
+          <button
+            id="stopButton"
+            class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105 disabled:bg-gray-400"
+            disabled
+          >
+            Stop Recording
+          </button>
         </div>
+        <div class="text-center mb-6">
+          <p class="text-lg text-gray-700">
+            <strong>Status:</strong> <span id="status">Loading...</span>
+          </p>
+          <div id="progress-container" class="max-w-md mx-auto hidden">
+            <div class="progress-bar">
+              <div
+                id="progress-bar-fill"
+                class="progress-bar-fill"
+                style="width: 0%"
+              ></div>
+            </div>
+            <p id="progress-text" class="text-xs text-gray-500 mt-1"></p>
+          </div>
+        </div>
+
+        <div
+          class="w-full bg-gray-50 rounded-lg p-4 border border-gray-200 flex-1 overflow-y-auto"
+        >
+          <div class="flex justify-between items-center mb-2">
+            <h2 class="text-xl font-semibold text-gray-800">Transcript</h2>
+            <div class="flex space-x-2">
+              <button
+                id="copy-button"
+                class="px-3 py-1 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm"
+              >
+                Copy
+              </button>
+              <button
+                id="download-txt-button"
+                class="px-3 py-1 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm"
+              >
+                Download .txt
+              </button>
+              <button
+                id="edit-button"
+                class="px-3 py-1 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm"
+              >
+                Edit
+              </button>
+            </div>
+          </div>
+          <div
+            id="transcript-container"
+            class="text-left text-gray-800 whitespace-pre-wrap"
+          >
+            <span id="final-transcript"></span
+            ><span id="interim-transcript"></span>
+          </div>
+          <div id="edit-hint" class="text-xs text-gray-500 mt-1 hidden">
+            Editing mode active. Click outside or press Escape to exit.
+          </div>
+        </div>
+
+        <div id="download-container" class="text-center mt-6 hidden">
+          <a
+            id="downloadLink"
+            class="inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg"
+            >Download Recording (MP3)</a
+          >
+        </div>
+      </div>
     </main>
-    
-    <div id="settings-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden">
-        <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-2xl">
-            <h2 class="text-2xl font-bold mb-4">Settings</h2>
-            <form id="settings-form">
-                <fieldset class="mb-4">
-                    <legend class="font-semibold text-lg mb-2">Authentication</legend>
-                    <div>
-                        <label for="api_key_input" class="block text-sm font-medium">API Key (if server authentication is enabled)</label>
-                        <input type="password" id="api_key_input" placeholder="Enter API key" class="w-full mt-1 border-gray-300 rounded-md px-3 py-2 border">
-                        <p class="text-xs text-gray-500 mt-1">Stored locally in your browser. Leave empty if authentication is disabled on the server.</p>
-                    </div>
-                </fieldset>
-                <fieldset>
-                    <legend class="font-semibold text-lg mb-2">Voice Activity Detection (VAD)</legend>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label for="vad_prob_threshold" class="block text-sm font-medium">Speech Probability Threshold</label>
-                            <div class="flex items-center space-x-3 mt-1">
-                                <input type="range" id="vad_prob_threshold" name="vad_parameters.prob_threshold" min="0.1" max="0.9" step="0.05" class="w-full">
-                                <output for="vad_prob_threshold" id="vad_prob_threshold_output" class="font-mono text-sm text-gray-600 w-10 text-center">0.50</output>
-                            </div>
-                        </div>
-                        <div>
-                            <label for="vad_silence_duration" class="block text-sm font-medium">Silence Duration (s)</label>
-                            <input type="number" id="vad_silence_duration" name="vad_parameters.silence_duration" min="0.1" max="5" step="0.1" class="w-full mt-1 border-gray-300 rounded-md">
-                        </div>
-                         <div>
-                            <label for="vad_min_speech_duration" class="block text-sm font-medium">Minimum Speech Duration (s)</label>
-                            <input type="number" id="vad_min_speech_duration" name="vad_parameters.min_speech_duration" min="0.1" max="2" step="0.1" class="w-full mt-1 border-gray-300 rounded-md">
-                        </div>
-                    </div>
-                </fieldset>
-                <div class="mt-6 flex justify-end space-x-4">
-                    <button type="button" id="cancel-settings" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded">Cancel</button>
-                    <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">Save Changes</button>
+
+    <div
+      id="settings-modal"
+      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden"
+    >
+      <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-2xl">
+        <h2 class="text-2xl font-bold mb-4">Settings</h2>
+        <form id="settings-form">
+          <fieldset class="mb-4">
+            <legend class="font-semibold text-lg mb-2">Authentication</legend>
+            <div>
+              <label for="api_key_input" class="block text-sm font-medium"
+                >API Key (if server authentication is enabled)</label
+              >
+              <input
+                type="password"
+                id="api_key_input"
+                placeholder="Enter API key"
+                class="w-full mt-1 border-gray-300 rounded-md px-3 py-2 border"
+              />
+              <p class="text-xs text-gray-500 mt-1">
+                Stored locally in your browser. Leave empty if authentication is
+                disabled on the server.
+              </p>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend class="font-semibold text-lg mb-2">
+              Voice Activity Detection (VAD)
+            </legend>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label
+                  for="vad_prob_threshold"
+                  class="block text-sm font-medium"
+                  >Speech Probability Threshold</label
+                >
+                <div class="flex items-center space-x-3 mt-1">
+                  <input
+                    type="range"
+                    id="vad_prob_threshold"
+                    name="vad_parameters.prob_threshold"
+                    min="0.1"
+                    max="0.9"
+                    step="0.05"
+                    class="w-full"
+                  />
+                  <output
+                    for="vad_prob_threshold"
+                    id="vad_prob_threshold_output"
+                    class="font-mono text-sm text-gray-600 w-10 text-center"
+                    >0.50</output
+                  >
                 </div>
-            </form>
-        </div>
+              </div>
+              <div>
+                <label
+                  for="vad_silence_duration"
+                  class="block text-sm font-medium"
+                  >Silence Duration (s)</label
+                >
+                <input
+                  type="number"
+                  id="vad_silence_duration"
+                  name="vad_parameters.silence_duration"
+                  min="0.1"
+                  max="5"
+                  step="0.1"
+                  class="w-full mt-1 border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label
+                  for="vad_min_speech_duration"
+                  class="block text-sm font-medium"
+                  >Minimum Speech Duration (s)</label
+                >
+                <input
+                  type="number"
+                  id="vad_min_speech_duration"
+                  name="vad_parameters.min_speech_duration"
+                  min="0.1"
+                  max="2"
+                  step="0.1"
+                  class="w-full mt-1 border-gray-300 rounded-md"
+                />
+              </div>
+            </div>
+          </fieldset>
+          <div class="mt-6 flex justify-end space-x-4">
+            <button
+              type="button"
+              id="cancel-settings"
+              class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
+            >
+              Save Changes
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
 
-    <div id="toast-notification" class="fixed bottom-5 right-5 bg-gray-800 text-white py-2 px-4 rounded-lg shadow-lg flex items-center transition-opacity duration-300 ease-in-out opacity-0 invisible">
-        <span id="toast-message"></span>
-        <button id="toast-close" class="ml-4 text-gray-400 hover:text-white font-bold">&times;</button>
+    <div
+      id="toast-notification"
+      class="fixed bottom-5 right-5 bg-gray-800 text-white py-2 px-4 rounded-lg shadow-lg flex items-center transition-opacity duration-300 ease-in-out opacity-0 invisible"
+    >
+      <span id="toast-message"></span>
+      <button
+        id="toast-close"
+        class="ml-4 text-gray-400 hover:text-white font-bold"
+      >
+        &times;
+      </button>
     </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const startButton = document.getElementById('startButton');
-            const stopButton = document.getElementById('stopButton');
-            const statusSpan = document.getElementById('status');
-            const finalTranscriptSpan = document.getElementById('final-transcript');
-            const interimTranscriptSpan = document.getElementById('interim-transcript');
-            const downloadContainer = document.getElementById('download-container');
-            const downloadLink = document.getElementById('downloadLink');
-            const modelSelect = document.getElementById('model-select');
-            const deviceSelect = document.getElementById('device-select');
-            const languageSelect = document.getElementById('language-select');
-            const waveformCanvas = document.getElementById('waveform-canvas');
-            const waveformCtx = waveformCanvas.getContext('2d');
-            const copyButton = document.getElementById('copy-button');
-            const downloadTxtButton = document.getElementById('download-txt-button');
-            const settingsButton = document.getElementById('settings-button');
-            const settingsModal = document.getElementById('settings-modal');
-            const settingsForm = document.getElementById('settings-form');
-            const cancelSettings = document.getElementById('cancel-settings');
-            const fileUpload = document.getElementById('file-upload');
-            const uploadButton = document.getElementById('upload-button');
-            const jobStatusContainer = document.getElementById('job-status-container');
-            const toast = document.getElementById('toast-notification');
-            const toastMessage = document.getElementById('toast-message');
-            const toastClose = document.getElementById('toast-close');
+      document.addEventListener("DOMContentLoaded", () => {
+        const startButton = document.getElementById("startButton");
+        const stopButton = document.getElementById("stopButton");
+        const statusSpan = document.getElementById("status");
+        const finalTranscriptSpan = document.getElementById("final-transcript");
+        const interimTranscriptSpan =
+          document.getElementById("interim-transcript");
+        const downloadContainer = document.getElementById("download-container");
+        const downloadLink = document.getElementById("downloadLink");
+        const modelSelect = document.getElementById("model-select");
+        const deviceSelect = document.getElementById("device-select");
+        const languageSelect = document.getElementById("language-select");
+        const waveformCanvas = document.getElementById("waveform-canvas");
+        const waveformCtx = waveformCanvas.getContext("2d");
+        const copyButton = document.getElementById("copy-button");
+        const downloadTxtButton = document.getElementById(
+          "download-txt-button",
+        );
+        const settingsButton = document.getElementById("settings-button");
+        const settingsModal = document.getElementById("settings-modal");
+        const settingsForm = document.getElementById("settings-form");
+        const cancelSettings = document.getElementById("cancel-settings");
+        const fileUpload = document.getElementById("file-upload");
+        const uploadButton = document.getElementById("upload-button");
+        const jobStatusContainer = document.getElementById(
+          "job-status-container",
+        );
+        const toast = document.getElementById("toast-notification");
+        const toastMessage = document.getElementById("toast-message");
+        const toastClose = document.getElementById("toast-close");
 
-            let audioContext, workletNode, mediaStream, websocket, sessionId;
-            let activePolls = new Set();
-            let toastTimeout;
-            let isModelLoading = false;  // Track if model is being loaded/downloaded
-            const progressContainer = document.getElementById('progress-container');
-            const progressBarFill = document.getElementById('progress-bar-fill');
-            const progressText = document.getElementById('progress-text');
-            const apiKeyInput = document.getElementById('api_key_input');
+        let audioContext, workletNode, mediaStream, websocket, sessionId;
+        let activePolls = new Set();
+        let toastTimeout;
+        let isModelLoading = false; // Track if model is being loaded/downloaded
+        const progressContainer = document.getElementById("progress-container");
+        const progressBarFill = document.getElementById("progress-bar-fill");
+        const progressText = document.getElementById("progress-text");
+        const apiKeyInput = document.getElementById("api_key_input");
 
-            // API Key management
-            const getApiKey = () => localStorage.getItem('echoscribe_api_key') || '';
-            const setApiKey = (key) => {
-                if (key) {
-                    localStorage.setItem('echoscribe_api_key', key);
-                } else {
-                    localStorage.removeItem('echoscribe_api_key');
-                }
+        // API Key management
+        const getApiKey = () =>
+          localStorage.getItem("echoscribe_api_key") || "";
+        const setApiKey = (key) => {
+          if (key) {
+            localStorage.setItem("echoscribe_api_key", key);
+          } else {
+            localStorage.removeItem("echoscribe_api_key");
+          }
+        };
+
+        // Helper function to add auth headers to fetch requests
+        const fetchWithAuth = (url, options = {}) => {
+          const apiKey = getApiKey();
+          if (apiKey) {
+            options.headers = options.headers || {};
+            options.headers["X-API-Key"] = apiKey;
+          }
+          return fetch(url, options);
+        };
+
+        const initialize = async () => {
+          try {
+            const response = await fetch("/api/config");
+            if (!response.ok)
+              throw new Error(`Failed to fetch config: ${response.statusText}`);
+            const config = await response.json();
+            populateDropdown(modelSelect, config.models, "base");
+            populateDropdown(deviceSelect, config.devices, "cpu");
+            populateDropdown(languageSelect, config.languages, "en");
+            await loadSettings();
+            updateUI("idle");
+          } catch (error) {
+            console.error("Failed to load configuration:", error);
+            updateUI("error", "Could not load server configuration.");
+          }
+        };
+
+        const populateDropdown = (selectElement, options, defaultValue) => {
+          const isObject = !Array.isArray(options);
+          selectElement.innerHTML = "";
+          for (const key in options) {
+            const value = isObject ? key : options[key];
+            const text = isObject ? options[key] : options[key];
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = text;
+            if (value === defaultValue) option.selected = true;
+            selectElement.appendChild(option);
+          }
+        };
+
+        // Reconnection state
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        const baseReconnectDelay = 1000; // 1 second
+        const maxReconnectDelay = 30000; // 30 seconds
+        let reconnectTimeout = null;
+        let isIntentionalDisconnect = false;
+
+        const getReconnectDelay = () => {
+          // Exponential backoff with jitter
+          const delay = Math.min(
+            maxReconnectDelay,
+            baseReconnectDelay * Math.pow(2, reconnectAttempts),
+          );
+          return delay + Math.random() * 1000; // Add up to 1s jitter
+        };
+
+        const attemptReconnect = () => {
+          if (
+            isIntentionalDisconnect ||
+            reconnectAttempts >= maxReconnectAttempts
+          ) {
+            if (reconnectAttempts >= maxReconnectAttempts) {
+              updateUI(
+                "error",
+                "Connection lost. Please refresh to try again.",
+              );
+            }
+            return;
+          }
+
+          reconnectAttempts++;
+          const delay = getReconnectDelay();
+          console.log(
+            `Attempting reconnection ${reconnectAttempts}/${maxReconnectAttempts} in ${Math.round(
+              delay,
+            )}ms...`,
+          );
+          updateUI(
+            "reconnecting",
+            `Reconnecting (${reconnectAttempts}/${maxReconnectAttempts})...`,
+          );
+
+          reconnectTimeout = setTimeout(() => {
+            connectWebSocket(true); // Pass true to indicate reconnection
+          }, delay);
+        };
+
+        const cancelReconnect = () => {
+          if (reconnectTimeout) {
+            clearTimeout(reconnectTimeout);
+            reconnectTimeout = null;
+          }
+          reconnectAttempts = 0;
+        };
+
+        const connectWebSocket = (isReconnect = false) => {
+          if (!isReconnect) {
+            sessionId = generateUUID();
+            reconnectAttempts = 0;
+            isIntentionalDisconnect = false;
+          }
+
+          // Dynamically determine WebSocket protocol based on page protocol
+          const wsProtocol =
+            window.location.protocol === "https:" ? "wss:" : "ws:";
+          const apiKey = getApiKey();
+          const wsUrl = apiKey
+            ? `${wsProtocol}//${
+                window.location.host
+              }/ws/${sessionId}?api_key=${encodeURIComponent(apiKey)}`
+            : `${wsProtocol}//${window.location.host}/ws/${sessionId}`;
+          websocket = new WebSocket(wsUrl);
+
+          websocket.onopen = () => {
+            console.log("WebSocket connection established.");
+            reconnectAttempts = 0; // Reset on successful connection
+            isModelLoading = true; // Will be set to false when 'ready' status received
+            updateUI("connecting");
+            const config = {
+              model: modelSelect.value,
+              device: deviceSelect.value,
+              language: languageSelect.value,
             };
+            websocket.send(JSON.stringify(config));
+          };
 
-            // Helper function to add auth headers to fetch requests
-            const fetchWithAuth = (url, options = {}) => {
-                const apiKey = getApiKey();
-                if (apiKey) {
-                    options.headers = options.headers || {};
-                    options.headers['X-API-Key'] = apiKey;
-                }
-                return fetch(url, options);
-            };
+          websocket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
 
-            const initialize = async () => {
-                try {
-                    const response = await fetch('/api/config');
-                    if (!response.ok) throw new Error(`Failed to fetch config: ${response.statusText}`);
-                    const config = await response.json();
-                    populateDropdown(modelSelect, config.models, 'base');
-                    populateDropdown(deviceSelect, config.devices, 'cpu');
-                    populateDropdown(languageSelect, config.languages, 'en');
-                    await loadSettings();
-                    updateUI('idle');
-                } catch (error) {
-                    console.error("Failed to load configuration:", error);
-                    updateUI('error', 'Could not load server configuration.');
-                }
-            };
+            // Handle status messages from server
+            if (data.type === "status") {
+              handleStatusMessage(data);
+              return;
+            }
 
-            const populateDropdown = (selectElement, options, defaultValue) => {
-                const isObject = !Array.isArray(options);
-                selectElement.innerHTML = '';
-                for (const key in options) {
-                    const value = isObject ? key : options[key];
-                    const text = isObject ? options[key] : options[key];
-                    const option = document.createElement('option');
-                    option.value = value;
-                    option.textContent = text;
-                    if (value === defaultValue) option.selected = true;
-                    selectElement.appendChild(option);
-                }
-            };
+            if (data.type === "final") {
+              interimTranscriptSpan.textContent = "";
+              // Format timestamp if available
+              const timestamp =
+                data.start !== undefined ? `[${formatTime(data.start)}] ` : "";
+              finalTranscriptSpan.textContent += timestamp + data.text + " ";
+              scrollToBottom();
+            } else if (data.type === "interim") {
+              interimTranscriptSpan.textContent = data.text;
+            } else if (data.type === "word") {
+              // Word-level streaming: append word to interim area for real-time display
+              const currentInterim = interimTranscriptSpan.textContent;
+              interimTranscriptSpan.textContent =
+                currentInterim + data.text + " ";
+              scrollToBottom();
+            }
+          };
 
-            // Reconnection state
-            let reconnectAttempts = 0;
-            const maxReconnectAttempts = 5;
-            const baseReconnectDelay = 1000; // 1 second
-            const maxReconnectDelay = 30000; // 30 seconds
-            let reconnectTimeout = null;
-            let isIntentionalDisconnect = false;
+          // Handle status messages from server
+          const handleStatusMessage = (data) => {
+            const { status, message, progress } = data;
+            console.log(
+              `Status update: ${status} - ${message} (${Math.round(
+                progress * 100,
+              )}%)`,
+            );
 
-            const getReconnectDelay = () => {
-                // Exponential backoff with jitter
-                const delay = Math.min(
-                    maxReconnectDelay,
-                    baseReconnectDelay * Math.pow(2, reconnectAttempts)
-                );
-                return delay + Math.random() * 1000; // Add up to 1s jitter
-            };
+            switch (status) {
+              case "checking":
+              case "downloading":
+                isModelLoading = true;
+                statusSpan.textContent = message;
+                progressContainer.classList.remove("hidden");
+                progressBarFill.style.width = `${progress * 100}%`;
+                progressBarFill.className = "progress-bar-fill downloading";
+                progressText.textContent = `${Math.round(
+                  progress * 100,
+                )}% complete`;
+                break;
 
-            const attemptReconnect = () => {
-                if (isIntentionalDisconnect || reconnectAttempts >= maxReconnectAttempts) {
-                    if (reconnectAttempts >= maxReconnectAttempts) {
-                        updateUI('error', 'Connection lost. Please refresh to try again.');
-                    }
-                    return;
-                }
+              case "loading":
+                isModelLoading = true;
+                statusSpan.textContent = message;
+                progressContainer.classList.remove("hidden");
+                progressBarFill.style.width = `${progress * 100}%`;
+                progressBarFill.className = "progress-bar-fill loading";
+                progressText.textContent = "Loading model...";
+                break;
 
-                reconnectAttempts++;
-                const delay = getReconnectDelay();
-                console.log(`Attempting reconnection ${reconnectAttempts}/${maxReconnectAttempts} in ${Math.round(delay)}ms...`);
-                updateUI('reconnecting', `Reconnecting (${reconnectAttempts}/${maxReconnectAttempts})...`);
-
-                reconnectTimeout = setTimeout(() => {
-                    connectWebSocket(true); // Pass true to indicate reconnection
-                }, delay);
-            };
-
-            const cancelReconnect = () => {
-                if (reconnectTimeout) {
-                    clearTimeout(reconnectTimeout);
-                    reconnectTimeout = null;
-                }
-                reconnectAttempts = 0;
-            };
-
-            const connectWebSocket = (isReconnect = false) => {
-                if (!isReconnect) {
-                    sessionId = generateUUID();
-                    reconnectAttempts = 0;
-                    isIntentionalDisconnect = false;
-                }
-
-                // Dynamically determine WebSocket protocol based on page protocol
-                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const apiKey = getApiKey();
-                const wsUrl = apiKey
-                    ? `${wsProtocol}//${window.location.host}/ws/${sessionId}?api_key=${encodeURIComponent(apiKey)}`
-                    : `${wsProtocol}//${window.location.host}/ws/${sessionId}`;
-                websocket = new WebSocket(wsUrl);
-
-                websocket.onopen = () => {
-                    console.log("WebSocket connection established.");
-                    reconnectAttempts = 0; // Reset on successful connection
-                    isModelLoading = true;  // Will be set to false when 'ready' status received
-                    updateUI('connecting');
-                    const config = {
-                        model: modelSelect.value,
-                        device: deviceSelect.value,
-                        language: languageSelect.value,
-                    };
-                    websocket.send(JSON.stringify(config));
-                };
-
-                websocket.onmessage = (event) => {
-                    const data = JSON.parse(event.data);
-
-                    // Handle status messages from server
-                    if (data.type === 'status') {
-                        handleStatusMessage(data);
-                        return;
-                    }
-
-                    if (data.type === 'final') {
-                        interimTranscriptSpan.textContent = '';
-                        // Format timestamp if available
-                        const timestamp = data.start !== undefined ? `[${formatTime(data.start)}] ` : '';
-                        finalTranscriptSpan.textContent += timestamp + data.text + ' ';
-                        scrollToBottom();
-                    } else if (data.type === 'interim') {
-                        interimTranscriptSpan.textContent = data.text;
-                    } else if (data.type === 'word') {
-                        // Word-level streaming: append word to interim area for real-time display
-                        const currentInterim = interimTranscriptSpan.textContent;
-                        interimTranscriptSpan.textContent = currentInterim + data.text + ' ';
-                        scrollToBottom();
-                    }
-                };
-
-                // Handle status messages from server
-                const handleStatusMessage = (data) => {
-                    const { status, message, progress } = data;
-                    console.log(`Status update: ${status} - ${message} (${Math.round(progress * 100)}%)`);
-
-                    switch (status) {
-                        case 'checking':
-                        case 'downloading':
-                            isModelLoading = true;
-                            statusSpan.textContent = message;
-                            progressContainer.classList.remove('hidden');
-                            progressBarFill.style.width = `${progress * 100}%`;
-                            progressBarFill.className = 'progress-bar-fill downloading';
-                            progressText.textContent = `${Math.round(progress * 100)}% complete`;
-                            break;
-
-                        case 'loading':
-                            isModelLoading = true;
-                            statusSpan.textContent = message;
-                            progressContainer.classList.remove('hidden');
-                            progressBarFill.style.width = `${progress * 100}%`;
-                            progressBarFill.className = 'progress-bar-fill loading';
-                            progressText.textContent = 'Loading model...';
-                            break;
-
-                        case 'ready':
-                            isModelLoading = false;
-                            statusSpan.textContent = message;
-                            progressContainer.classList.add('hidden');
-                            progressBarFill.style.width = '100%';
-                            progressBarFill.className = 'progress-bar-fill ready';
-                            // Enable recording now that model is ready
-                            stopButton.disabled = false;
-                            break;
-
-                        case 'error':
-                            isModelLoading = false;
-                            statusSpan.textContent = `Error: ${message}`;
-                            progressContainer.classList.add('hidden');
-                            updateUI('error', message);
-                            break;
-                    }
-                };
-
-                websocket.onclose = (event) => {
-                    console.log("WebSocket connection closed.", event.code, event.reason);
-
-                    // Server shutdown (1001) or intentional close - don't reconnect
-                    if (event.code === 1001 || isIntentionalDisconnect) {
-                        isModelLoading = false;
-                        progressContainer.classList.add('hidden');
-                        stopAudioProcessing(true);
-                        return;
-                    }
-
-                    // Don't reconnect if model is still loading - connection is working, just slow
-                    if (isModelLoading) {
-                        console.log("Connection closed during model loading - not reconnecting to avoid loop");
-                        isModelLoading = false;
-                        progressContainer.classList.add('hidden');
-                        updateUI('error', 'Connection lost during model loading. Please try again.');
-                        stopAudioProcessing(false);
-                        return;
-                    }
-
-                    // Unexpected close - attempt reconnect if we were recording
-                    if (workletNode && !isIntentionalDisconnect) {
-                        attemptReconnect();
-                    } else {
-                        stopAudioProcessing(false);
-                    }
-                };
-
-                websocket.onerror = (error) => {
-                    console.error("WebSocket error:", error);
-                    // Don't update UI here - let onclose handle it
-                };
-            };
-
-            const startAudioProcessing = async () => {
-                if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                
-                try {
-                    await audioContext.audioWorklet.addModule('worklet.js');
-                    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
-                    const source = audioContext.createMediaStreamSource(mediaStream);
-                    workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
-                    
-                    source.connect(workletNode).connect(audioContext.destination);
-
-                    workletNode.port.onmessage = (event) => {
-                        if (websocket && websocket.readyState === WebSocket.OPEN) {
-                            websocket.send(event.data.pcmData);
-                        }
-                        // Draw waveform visualization
-                        if (event.data.waveform) {
-                            drawWaveform(event.data.waveform, event.data.volume);
-                        }
-                    };
-                    workletNode.port.postMessage({ command: 'start' });
-                } catch (error) {
-                    console.error("Error starting audio processing:", error);
-                    updateUI('error', 'Could not access microphone.');
-                }
-            };
-
-            const stopAudioProcessing = (intentional = true) => {
-                // Mark as intentional to prevent reconnection attempts
-                if (intentional) {
-                    isIntentionalDisconnect = true;
-                    cancelReconnect();
-                }
-
-                // Reset model loading state
+              case "ready":
                 isModelLoading = false;
-                progressContainer.classList.add('hidden');
+                statusSpan.textContent = message;
+                progressContainer.classList.add("hidden");
+                progressBarFill.style.width = "100%";
+                progressBarFill.className = "progress-bar-fill ready";
+                // Enable recording now that model is ready
+                stopButton.disabled = false;
+                break;
 
-                if (workletNode) {
-                    workletNode.port.postMessage({ command: 'stop' });
-                    workletNode.disconnect();
-                    workletNode = null;
-                }
-                if (mediaStream) {
-                    mediaStream.getTracks().forEach(track => track.stop());
-                    mediaStream = null;
-                }
-                if (audioContext && audioContext.state !== 'closed') {
-                    audioContext.close().then(() => audioContext = null);
-                }
-                // Clear waveform canvas
-                clearWaveform();
-            };
+              case "error":
+                isModelLoading = false;
+                statusSpan.textContent = `Error: ${message}`;
+                progressContainer.classList.add("hidden");
+                updateUI("error", message);
+                break;
+            }
+          };
 
-            // Waveform visualization functions
-            const drawWaveform = (samples, volume) => {
-                const width = waveformCanvas.width;
-                const height = waveformCanvas.height;
-                const centerY = height / 2;
+          websocket.onclose = (event) => {
+            console.log(
+              "WebSocket connection closed.",
+              event.code,
+              event.reason,
+            );
 
-                // Clear canvas with slight fade for smooth animation
-                waveformCtx.fillStyle = 'rgba(229, 231, 235, 0.3)'; // gray-200 with alpha
-                waveformCtx.fillRect(0, 0, width, height);
+            // Server shutdown (1001) or intentional close - don't reconnect
+            if (event.code === 1001 || isIntentionalDisconnect) {
+              isModelLoading = false;
+              progressContainer.classList.add("hidden");
+              stopAudioProcessing(true);
+              return;
+            }
 
-                // Draw waveform
-                waveformCtx.beginPath();
-                waveformCtx.strokeStyle = volume > 0.05 ? '#10B981' : '#6B7280'; // green-500 or gray-500
-                waveformCtx.lineWidth = 2;
+            // Don't reconnect if model is still loading - connection is working, just slow
+            if (isModelLoading) {
+              console.log(
+                "Connection closed during model loading - not reconnecting to avoid loop",
+              );
+              isModelLoading = false;
+              progressContainer.classList.add("hidden");
+              updateUI(
+                "error",
+                "Connection lost during model loading. Please try again.",
+              );
+              stopAudioProcessing(false);
+              return;
+            }
 
-                const sliceWidth = width / samples.length;
-                let x = 0;
+            // Unexpected close - attempt reconnect if we were recording
+            if (workletNode && !isIntentionalDisconnect) {
+              attemptReconnect();
+            } else {
+              stopAudioProcessing(false);
+            }
+          };
 
-                for (let i = 0; i < samples.length; i++) {
-                    const amplitude = samples[i] * height * 2; // Scale amplitude
-                    const y = centerY + amplitude;
+          websocket.onerror = (error) => {
+            console.error("WebSocket error:", error);
+            // Don't update UI here - let onclose handle it
+          };
+        };
 
-                    if (i === 0) {
-                        waveformCtx.moveTo(x, y);
-                    } else {
-                        waveformCtx.lineTo(x, y);
-                    }
-                    x += sliceWidth;
-                }
+        const startAudioProcessing = async () => {
+          if (!audioContext)
+            audioContext = new (window.AudioContext ||
+              window.webkitAudioContext)();
 
-                waveformCtx.stroke();
-            };
-
-            const clearWaveform = () => {
-                waveformCtx.fillStyle = '#E5E7EB'; // gray-200
-                waveformCtx.fillRect(0, 0, waveformCanvas.width, waveformCanvas.height);
-            };
-
-            const startRecording = async () => {
-                updateUI('connecting');
-                connectWebSocket();
-                await startAudioProcessing();
-            };
-
-            const stopRecording = () => {
-                if (websocket) websocket.close();
-                stopAudioProcessing();
-                updateUI('stopped');
-            };
-
-            const updateUI = (state, message = '') => {
-                const elementsToDisable = [startButton, stopButton, modelSelect, deviceSelect, languageSelect, uploadButton];
-                elementsToDisable.forEach(el => el.disabled = true);
-
-                switch (state) {
-                    case 'idle':
-                        statusSpan.textContent = 'Idle';
-                        progressContainer.classList.add('hidden');
-                        [startButton, modelSelect, deviceSelect, languageSelect, uploadButton].forEach(el => el.disabled = false);
-                        downloadContainer.classList.add('hidden');
-                        break;
-                    case 'connecting':
-                        statusSpan.textContent = 'Connecting...';
-                        finalTranscriptSpan.textContent = '';
-                        interimTranscriptSpan.textContent = '';
-                        downloadContainer.classList.add('hidden');
-                        stopButton.disabled = false; // Allow cancel during connecting
-                        break;
-                    case 'connected':
-                        // This state is now handled by 'ready' status message
-                        statusSpan.textContent = 'Connected. Start speaking.';
-                        stopButton.disabled = false;
-                        break;
-                    case 'stopped':
-                        statusSpan.textContent = 'Recording stopped.';
-                        progressContainer.classList.add('hidden');
-                        [startButton, modelSelect, deviceSelect, languageSelect, uploadButton].forEach(el => el.disabled = false);
-                        if (sessionId) {
-                            downloadLink.href = `/download/${sessionId}`;
-                            downloadContainer.classList.remove('hidden');
-                        }
-                        break;
-                    case 'reconnecting':
-                        statusSpan.textContent = message || 'Reconnecting...';
-                        stopButton.disabled = false; // Allow user to stop during reconnect
-                        break;
-                    case 'error':
-                        statusSpan.textContent = `Error: ${message}`;
-                        progressContainer.classList.add('hidden');
-                        [startButton, modelSelect, deviceSelect, languageSelect, uploadButton].forEach(el => el.disabled = false);
-                        break;
-                }
-            };
-            
-            const scrollToBottom = () => {
-                const container = document.getElementById('transcript-container');
-                container.scrollTop = container.scrollHeight;
-            };
-
-            const showToast = (message) => {
-                if (toastTimeout) clearTimeout(toastTimeout);
-                toastMessage.textContent = message;
-                toast.classList.remove('opacity-0', 'invisible');
-                toast.classList.add('opacity-100', 'visible');
-                toastTimeout = setTimeout(() => hideToast(), 3000);
-            };
-
-            const hideToast = () => {
-                toast.classList.remove('opacity-100', 'visible');
-                toast.classList.add('opacity-0', 'invisible');
-            };
-
-            copyButton.addEventListener('click', () => {
-                const text = finalTranscriptSpan.textContent.trim();
-                if (!text) return;
-                navigator.clipboard.writeText(text).then(() => {
-                    showToast('Transcript copied!');
-                }).catch(err => {
-                    console.error('Failed to copy transcript: ', err);
-                    showToast('Error: Could not copy.');
-                });
+          try {
+            await audioContext.audioWorklet.addModule("worklet.js");
+            mediaStream = await navigator.mediaDevices.getUserMedia({
+              audio: { channelCount: 1 },
             });
+            const source = audioContext.createMediaStreamSource(mediaStream);
+            workletNode = new AudioWorkletNode(audioContext, "audio-processor");
 
-            downloadTxtButton.addEventListener('click', () => {
-                const text = finalTranscriptSpan.textContent;
-                const blob = new Blob([text], { type: 'text/plain' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `transcript_${sessionId || 'session'}.txt`;
-                a.click();
-                URL.revokeObjectURL(url);
+            source.connect(workletNode).connect(audioContext.destination);
+
+            workletNode.port.onmessage = (event) => {
+              if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(event.data.pcmData);
+              }
+              // Draw waveform visualization
+              if (event.data.waveform) {
+                drawWaveform(event.data.waveform, event.data.volume);
+              }
+            };
+            workletNode.port.postMessage({ command: "start" });
+          } catch (error) {
+            console.error("Error starting audio processing:", error);
+            updateUI("error", "Could not access microphone.");
+          }
+        };
+
+        const stopAudioProcessing = (intentional = true) => {
+          // Mark as intentional to prevent reconnection attempts
+          if (intentional) {
+            isIntentionalDisconnect = true;
+            cancelReconnect();
+          }
+
+          // Reset model loading state
+          isModelLoading = false;
+          progressContainer.classList.add("hidden");
+
+          if (workletNode) {
+            workletNode.port.postMessage({ command: "stop" });
+            workletNode.disconnect();
+            workletNode = null;
+          }
+          if (mediaStream) {
+            mediaStream.getTracks().forEach((track) => track.stop());
+            mediaStream = null;
+          }
+          if (audioContext && audioContext.state !== "closed") {
+            audioContext.close().then(() => (audioContext = null));
+          }
+          // Clear waveform canvas
+          clearWaveform();
+        };
+
+        // Waveform visualization functions
+        const drawWaveform = (samples, volume) => {
+          const width = waveformCanvas.width;
+          const height = waveformCanvas.height;
+          const centerY = height / 2;
+
+          // Clear canvas with slight fade for smooth animation
+          waveformCtx.fillStyle = "rgba(229, 231, 235, 0.3)"; // gray-200 with alpha
+          waveformCtx.fillRect(0, 0, width, height);
+
+          // Draw waveform
+          waveformCtx.beginPath();
+          waveformCtx.strokeStyle = volume > 0.05 ? "#10B981" : "#6B7280"; // green-500 or gray-500
+          waveformCtx.lineWidth = 2;
+
+          const sliceWidth = width / samples.length;
+          let x = 0;
+
+          for (let i = 0; i < samples.length; i++) {
+            const amplitude = samples[i] * height * 2; // Scale amplitude
+            const y = centerY + amplitude;
+
+            if (i === 0) {
+              waveformCtx.moveTo(x, y);
+            } else {
+              waveformCtx.lineTo(x, y);
+            }
+            x += sliceWidth;
+          }
+
+          waveformCtx.stroke();
+        };
+
+        const clearWaveform = () => {
+          waveformCtx.fillStyle = "#E5E7EB"; // gray-200
+          waveformCtx.fillRect(
+            0,
+            0,
+            waveformCanvas.width,
+            waveformCanvas.height,
+          );
+        };
+
+        const startRecording = async () => {
+          updateUI("connecting");
+          connectWebSocket();
+          await startAudioProcessing();
+        };
+
+        const stopRecording = () => {
+          if (websocket) websocket.close();
+          stopAudioProcessing();
+          updateUI("stopped");
+        };
+
+        const updateUI = (state, message = "") => {
+          const elementsToDisable = [
+            startButton,
+            stopButton,
+            modelSelect,
+            deviceSelect,
+            languageSelect,
+            uploadButton,
+          ];
+          elementsToDisable.forEach((el) => (el.disabled = true));
+
+          switch (state) {
+            case "idle":
+              statusSpan.textContent = "Idle";
+              progressContainer.classList.add("hidden");
+              [
+                startButton,
+                modelSelect,
+                deviceSelect,
+                languageSelect,
+                uploadButton,
+              ].forEach((el) => (el.disabled = false));
+              downloadContainer.classList.add("hidden");
+              break;
+            case "connecting":
+              statusSpan.textContent = "Connecting...";
+              finalTranscriptSpan.textContent = "";
+              interimTranscriptSpan.textContent = "";
+              downloadContainer.classList.add("hidden");
+              stopButton.disabled = false; // Allow cancel during connecting
+              break;
+            case "connected":
+              // This state is now handled by 'ready' status message
+              statusSpan.textContent = "Connected. Start speaking.";
+              stopButton.disabled = false;
+              break;
+            case "stopped":
+              statusSpan.textContent = "Recording stopped.";
+              progressContainer.classList.add("hidden");
+              [
+                startButton,
+                modelSelect,
+                deviceSelect,
+                languageSelect,
+                uploadButton,
+              ].forEach((el) => (el.disabled = false));
+              if (sessionId) {
+                downloadLink.href = `/download/${sessionId}`;
+                downloadContainer.classList.remove("hidden");
+              }
+              break;
+            case "reconnecting":
+              statusSpan.textContent = message || "Reconnecting...";
+              stopButton.disabled = false; // Allow user to stop during reconnect
+              break;
+            case "error":
+              statusSpan.textContent = `Error: ${message}`;
+              progressContainer.classList.add("hidden");
+              [
+                startButton,
+                modelSelect,
+                deviceSelect,
+                languageSelect,
+                uploadButton,
+              ].forEach((el) => (el.disabled = false));
+              break;
+          }
+        };
+
+        const scrollToBottom = () => {
+          const container = document.getElementById("transcript-container");
+          container.scrollTop = container.scrollHeight;
+        };
+
+        const showToast = (message) => {
+          if (toastTimeout) clearTimeout(toastTimeout);
+          toastMessage.textContent = message;
+          toast.classList.remove("opacity-0", "invisible");
+          toast.classList.add("opacity-100", "visible");
+          toastTimeout = setTimeout(() => hideToast(), 3000);
+        };
+
+        const hideToast = () => {
+          toast.classList.remove("opacity-100", "visible");
+          toast.classList.add("opacity-0", "invisible");
+        };
+
+        copyButton.addEventListener("click", () => {
+          const text = finalTranscriptSpan.textContent.trim();
+          if (!text) return;
+          navigator.clipboard
+            .writeText(text)
+            .then(() => {
+              showToast("Transcript copied!");
+            })
+            .catch((err) => {
+              console.error("Failed to copy transcript: ", err);
+              showToast("Error: Could not copy.");
             });
+        });
 
-            const loadSettings = async () => {
-                try {
-                    const response = await fetchWithAuth('/api/settings');
-                    const settings = await response.json();
-                    const thresholdSlider = document.getElementById('vad_prob_threshold');
-                    const thresholdOutput = document.getElementById('vad_prob_threshold_output');
-                    const silenceDurationInput = document.getElementById('vad_silence_duration');
-                    const minSpeechDurationInput = document.getElementById('vad_min_speech_duration');
+        downloadTxtButton.addEventListener("click", () => {
+          const text = finalTranscriptSpan.textContent;
+          const blob = new Blob([text], { type: "text/plain" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `transcript_${sessionId || "session"}.txt`;
+          a.click();
+          URL.revokeObjectURL(url);
+        });
 
-                    thresholdSlider.value = settings.vad_parameters.prob_threshold;
-                    thresholdOutput.textContent = parseFloat(thresholdSlider.value).toFixed(2);
-                    silenceDurationInput.value = settings.vad_parameters.silence_duration;
-                    minSpeechDurationInput.value = settings.vad_parameters.min_speech_duration;
+        const loadSettings = async () => {
+          try {
+            const response = await fetchWithAuth("/api/settings");
+            const settings = await response.json();
+            const thresholdSlider =
+              document.getElementById("vad_prob_threshold");
+            const thresholdOutput = document.getElementById(
+              "vad_prob_threshold_output",
+            );
+            const silenceDurationInput = document.getElementById(
+              "vad_silence_duration",
+            );
+            const minSpeechDurationInput = document.getElementById(
+              "vad_min_speech_duration",
+            );
 
-                    // Load API key from localStorage
-                    apiKeyInput.value = getApiKey();
-                } catch (error) {
-                    console.error("Failed to load settings:", error);
-                }
+            thresholdSlider.value = settings.vad_parameters.prob_threshold;
+            thresholdOutput.textContent = parseFloat(
+              thresholdSlider.value,
+            ).toFixed(2);
+            silenceDurationInput.value =
+              settings.vad_parameters.silence_duration;
+            minSpeechDurationInput.value =
+              settings.vad_parameters.min_speech_duration;
+
+            // Load API key from localStorage
+            apiKeyInput.value = getApiKey();
+          } catch (error) {
+            console.error("Failed to load settings:", error);
+          }
+        };
+
+        settingsButton.addEventListener("click", () =>
+          settingsModal.classList.remove("hidden"),
+        );
+        cancelSettings.addEventListener("click", () =>
+          settingsModal.classList.add("hidden"),
+        );
+        settingsModal.addEventListener("click", (e) => {
+          if (e.target === settingsModal) settingsModal.classList.add("hidden");
+        });
+
+        settingsForm.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const formData = new FormData(settingsForm);
+          const settings = {
+            vad_parameters: {
+              prob_threshold: parseFloat(
+                formData.get("vad_parameters.prob_threshold"),
+              ),
+              silence_duration: parseFloat(
+                formData.get("vad_parameters.silence_duration"),
+              ),
+              min_speech_duration: parseFloat(
+                formData.get("vad_parameters.min_speech_duration"),
+              ),
+            },
+          };
+
+          // Save API key to localStorage (client-side only)
+          setApiKey(apiKeyInput.value.trim());
+
+          try {
+            await fetchWithAuth("/api/settings", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(settings),
+            });
+            settingsModal.classList.add("hidden");
+            showToast("Settings saved!");
+          } catch (error) {
+            console.error("Failed to save settings:", error);
+            showToast("Error: Could not save settings.");
+          }
+        });
+
+        const filesSelectedText = document.getElementById("files-selected");
+        let batchQueue = []; // Queue of {file, queueId, duration} objects
+        let isProcessingBatch = false;
+        let queueIdCounter = 0;
+
+        // Get audio/video duration using Web Audio API or HTML5 video element
+        const getMediaDuration = (file) => {
+          return new Promise((resolve) => {
+            const url = URL.createObjectURL(file);
+
+            // Try video element first (works for both audio and video)
+            const media = document.createElement("video");
+            media.preload = "metadata";
+
+            media.onloadedmetadata = () => {
+              URL.revokeObjectURL(url);
+              resolve(media.duration);
             };
 
-            settingsButton.addEventListener('click', () => settingsModal.classList.remove('hidden'));
-            cancelSettings.addEventListener('click', () => settingsModal.classList.add('hidden'));
-            settingsModal.addEventListener('click', (e) => {
-                if (e.target === settingsModal) settingsModal.classList.add('hidden');
-            });
-
-            settingsForm.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const formData = new FormData(settingsForm);
-                const settings = {
-                    vad_parameters: {
-                        prob_threshold: parseFloat(formData.get('vad_parameters.prob_threshold')),
-                        silence_duration: parseFloat(formData.get('vad_parameters.silence_duration')),
-                        min_speech_duration: parseFloat(formData.get('vad_parameters.min_speech_duration')),
-                    }
-                };
-
-                // Save API key to localStorage (client-side only)
-                setApiKey(apiKeyInput.value.trim());
-
-                try {
-                    await fetchWithAuth('/api/settings', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(settings)
-                    });
-                    settingsModal.classList.add('hidden');
-                    showToast('Settings saved!');
-                } catch (error) {
-                    console.error("Failed to save settings:", error);
-                    showToast('Error: Could not save settings.');
-                }
-            });
-
-            const filesSelectedText = document.getElementById('files-selected');
-            let batchQueue = [];  // Queue of {file, queueId, duration} objects
-            let isProcessingBatch = false;
-            let queueIdCounter = 0;
-
-            // Get audio/video duration using Web Audio API or HTML5 video element
-            const getMediaDuration = (file) => {
-                return new Promise((resolve) => {
-                    const url = URL.createObjectURL(file);
-
-                    // Try video element first (works for both audio and video)
-                    const media = document.createElement('video');
-                    media.preload = 'metadata';
-
-                    media.onloadedmetadata = () => {
-                        URL.revokeObjectURL(url);
-                        resolve(media.duration);
-                    };
-
-                    media.onerror = () => {
-                        URL.revokeObjectURL(url);
-                        resolve(null);  // Could not determine duration
-                    };
-
-                    media.src = url;
-                });
+            media.onerror = () => {
+              URL.revokeObjectURL(url);
+              resolve(null); // Could not determine duration
             };
 
-            // Format duration in MM:SS or HH:MM:SS
-            const formatDuration = (seconds) => {
-                if (!seconds || isNaN(seconds)) return '';
-                const hrs = Math.floor(seconds / 3600);
-                const mins = Math.floor((seconds % 3600) / 60);
-                const secs = Math.floor(seconds % 60);
-                if (hrs > 0) {
-                    return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-                }
-                return `${mins}:${secs.toString().padStart(2, '0')}`;
-            };
+            media.src = url;
+          });
+        };
 
-            // Show file count when files are selected
-            fileUpload.addEventListener('change', () => {
-                const count = fileUpload.files.length;
-                if (count === 0) {
-                    filesSelectedText.textContent = '';
-                } else if (count === 1) {
-                    filesSelectedText.textContent = `1 file selected: ${fileUpload.files[0].name}`;
-                } else {
-                    filesSelectedText.textContent = `${count} files selected`;
-                }
-            });
+        // Format duration in MM:SS or HH:MM:SS
+        const formatDuration = (seconds) => {
+          if (!seconds || isNaN(seconds)) return "";
+          const hrs = Math.floor(seconds / 3600);
+          const mins = Math.floor((seconds % 3600) / 60);
+          const secs = Math.floor(seconds % 60);
+          if (hrs > 0) {
+            return `${hrs}:${mins.toString().padStart(2, "0")}:${secs
+              .toString()
+              .padStart(2, "0")}`;
+          }
+          return `${mins}:${secs.toString().padStart(2, "0")}`;
+        };
 
-            // Add a queued item to the UI (before upload)
-            const addQueuedItemToUI = (queueId, fileName, duration) => {
-                const durationStr = formatDuration(duration);
-                const jobElement = document.createElement('div');
-                jobElement.id = `queue-${queueId}`;
-                jobElement.className = 'bg-gray-50 p-3 rounded-lg border border-gray-200';
-                jobElement.innerHTML = `
+        // Show file count when files are selected
+        fileUpload.addEventListener("change", () => {
+          const count = fileUpload.files.length;
+          if (count === 0) {
+            filesSelectedText.textContent = "";
+          } else if (count === 1) {
+            filesSelectedText.textContent = `1 file selected: ${fileUpload.files[0].name}`;
+          } else {
+            filesSelectedText.textContent = `${count} files selected`;
+          }
+        });
+
+        // Add a queued item to the UI (before upload)
+        const addQueuedItemToUI = (queueId, fileName, duration) => {
+          const durationStr = formatDuration(duration);
+          const jobElement = document.createElement("div");
+          jobElement.id = `queue-${queueId}`;
+          jobElement.className =
+            "bg-gray-50 p-3 rounded-lg border border-gray-200";
+          jobElement.innerHTML = `
                     <div class="flex justify-between items-start mb-2">
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2">
                                 <p class="text-sm font-medium truncate" title="${fileName}">${fileName}</p>
-                                ${durationStr ? `<span class="text-xs text-gray-400 whitespace-nowrap">(${durationStr})</span>` : ''}
+                                ${
+                                  durationStr
+                                    ? `<span class="text-xs text-gray-400 whitespace-nowrap">(${durationStr})</span>`
+                                    : ""
+                                }
                             </div>
                             <p class="text-xs text-gray-500">Status: <span class="status">In queue...</span></p>
                         </div>
@@ -749,348 +1044,411 @@
                     </div>
                 `;
 
-                // Add remove button handler (for items still in queue)
-                const removeBtn = jobElement.querySelector('.remove-btn');
-                removeBtn.addEventListener('click', () => {
-                    // Remove from queue
-                    const idx = batchQueue.findIndex(item => item.queueId === queueId);
-                    if (idx !== -1) {
-                        batchQueue.splice(idx, 1);
-                    }
-                    // Remove from UI
-                    jobElement.remove();
-                    showToast('Removed from queue');
+          // Add remove button handler (for items still in queue)
+          const removeBtn = jobElement.querySelector(".remove-btn");
+          removeBtn.addEventListener("click", () => {
+            // Remove from queue
+            const idx = batchQueue.findIndex(
+              (item) => item.queueId === queueId,
+            );
+            if (idx !== -1) {
+              batchQueue.splice(idx, 1);
+            }
+            // Remove from UI
+            jobElement.remove();
+            showToast("Removed from queue");
+          });
+
+          // Add copy button handler
+          const copyBtn = jobElement.querySelector(".copy-btn");
+          copyBtn.addEventListener("click", () => {
+            const resultDiv = jobElement.querySelector(".result");
+            const text = resultDiv.textContent.trim();
+            if (text) {
+              navigator.clipboard
+                .writeText(text)
+                .then(() => {
+                  showToast("Copied to clipboard!");
+                })
+                .catch(() => {
+                  showToast("Failed to copy");
                 });
+            }
+          });
 
-                // Add copy button handler
-                const copyBtn = jobElement.querySelector('.copy-btn');
-                copyBtn.addEventListener('click', () => {
-                    const resultDiv = jobElement.querySelector('.result');
-                    const text = resultDiv.textContent.trim();
-                    if (text) {
-                        navigator.clipboard.writeText(text).then(() => {
-                            showToast('Copied to clipboard!');
-                        }).catch(() => {
-                            showToast('Failed to copy');
-                        });
-                    }
-                });
+          // Add download button handler
+          const downloadBtn = jobElement.querySelector(".download-btn");
+          downloadBtn.addEventListener("click", () => {
+            const resultDiv = jobElement.querySelector(".result");
+            const text = resultDiv.textContent.trim();
+            if (text) {
+              const blob = new Blob([text], { type: "text/plain" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `${fileName.replace(
+                /\.[^/.]+$/,
+                "",
+              )}_transcript.txt`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }
+          });
 
-                // Add download button handler
-                const downloadBtn = jobElement.querySelector('.download-btn');
-                downloadBtn.addEventListener('click', () => {
-                    const resultDiv = jobElement.querySelector('.result');
-                    const text = resultDiv.textContent.trim();
-                    if (text) {
-                        const blob = new Blob([text], { type: 'text/plain' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `${fileName.replace(/\.[^/.]+$/, '')}_transcript.txt`;
-                        a.click();
-                        URL.revokeObjectURL(url);
-                    }
-                });
+          // Add edit button handler
+          const editBtn = jobElement.querySelector(".edit-btn");
+          editBtn.addEventListener("click", () => {
+            const resultDiv = jobElement.querySelector(".result");
+            if (resultDiv.contentEditable === "true") {
+              resultDiv.contentEditable = "false";
+              resultDiv.classList.remove("border-blue-300", "bg-blue-50");
+              editBtn.innerHTML = '<i class="fas fa-edit"></i> Edit';
+            } else {
+              resultDiv.contentEditable = "true";
+              resultDiv.classList.add("border-blue-300", "bg-blue-50");
+              resultDiv.focus();
+              editBtn.innerHTML = '<i class="fas fa-check"></i> Done';
+            }
+          });
 
-                // Add edit button handler
-                const editBtn = jobElement.querySelector('.edit-btn');
-                editBtn.addEventListener('click', () => {
-                    const resultDiv = jobElement.querySelector('.result');
-                    if (resultDiv.contentEditable === 'true') {
-                        resultDiv.contentEditable = 'false';
-                        resultDiv.classList.remove('border-blue-300', 'bg-blue-50');
-                        editBtn.innerHTML = '<i class="fas fa-edit"></i> Edit';
-                    } else {
-                        resultDiv.contentEditable = 'true';
-                        resultDiv.classList.add('border-blue-300', 'bg-blue-50');
-                        resultDiv.focus();
-                        editBtn.innerHTML = '<i class="fas fa-check"></i> Done';
-                    }
-                });
+          jobStatusContainer.appendChild(jobElement);
+          return jobElement;
+        };
 
-                jobStatusContainer.appendChild(jobElement);
-                return jobElement;
-            };
+        // Process batch queue - one file at a time
+        const processBatchQueue = async () => {
+          if (isProcessingBatch || batchQueue.length === 0) return;
+          isProcessingBatch = true;
 
-            // Process batch queue - one file at a time
-            const processBatchQueue = async () => {
-                if (isProcessingBatch || batchQueue.length === 0) return;
-                isProcessingBatch = true;
+          while (batchQueue.length > 0) {
+            const item = batchQueue[0]; // Get first item but don't remove yet
+            const { file, queueId, fileName } = item;
+            const jobElement = document.getElementById(`queue-${queueId}`);
 
-                while (batchQueue.length > 0) {
-                    const item = batchQueue[0];  // Get first item but don't remove yet
-                    const { file, queueId, fileName } = item;
-                    const jobElement = document.getElementById(`queue-${queueId}`);
+            if (!jobElement) {
+              // Item was removed from queue
+              batchQueue.shift();
+              continue;
+            }
 
-                    if (!jobElement) {
-                        // Item was removed from queue
-                        batchQueue.shift();
-                        continue;
-                    }
+            // Update status to Processing
+            const statusSpan = jobElement.querySelector(".status");
+            statusSpan.textContent = "Processing...";
+            statusSpan.className = "status text-blue-600 font-medium";
 
-                    // Update status to Processing
-                    const statusSpan = jobElement.querySelector('.status');
-                    statusSpan.textContent = 'Processing...';
-                    statusSpan.className = 'status text-blue-600 font-medium';
+            // Change Remove button to Cancel
+            const removeBtn = jobElement.querySelector(".remove-btn");
+            removeBtn.textContent = "Cancel";
+            removeBtn.className =
+              "cancel-btn ml-2 text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded hover:bg-red-50";
 
-                    // Change Remove button to Cancel
-                    const removeBtn = jobElement.querySelector('.remove-btn');
-                    removeBtn.textContent = 'Cancel';
-                    removeBtn.className = 'cancel-btn ml-2 text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded hover:bg-red-50';
+            // Upload and process the file
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("model", modelSelect.value);
+            formData.append("language", languageSelect.value);
+            formData.append("device", deviceSelect.value);
 
-                    // Upload and process the file
-                    const formData = new FormData();
-                    formData.append('file', file);
-                    formData.append('model', modelSelect.value);
-                    formData.append('language', languageSelect.value);
-                    formData.append('device', deviceSelect.value);
+            try {
+              const response = await fetchWithAuth("/api/transcribe", {
+                method: "POST",
+                body: formData,
+              });
+              const data = await response.json();
 
-                    try {
-                        const response = await fetchWithAuth('/api/transcribe', { method: 'POST', body: formData });
-                        const data = await response.json();
+              // Store job_id on element for cancel functionality
+              jobElement.dataset.jobId = data.job_id;
 
-                        // Store job_id on element for cancel functionality
-                        jobElement.dataset.jobId = data.job_id;
-
-                        // Update cancel button handler with job_id
-                        const cancelBtn = jobElement.querySelector('.cancel-btn');
-                        cancelBtn.onclick = async () => {
-                            try {
-                                const resp = await fetchWithAuth(`/api/transcribe/${data.job_id}`, { method: 'DELETE' });
-                                if (resp.ok) {
-                                    showToast('Cancellation requested');
-                                } else {
-                                    const d = await resp.json();
-                                    showToast(d.error || 'Failed to cancel job');
-                                }
-                            } catch (err) {
-                                console.error('Cancel error:', err);
-                                showToast('Failed to cancel job');
-                            }
-                        };
-
-                        // Wait for job completion
-                        await waitForJobCompletion(data.job_id, jobElement, fileName);
-
-                    } catch (error) {
-                        console.error('File upload error:', error);
-                        statusSpan.textContent = 'Upload failed';
-                        statusSpan.className = 'status text-red-600';
-                        showToast(`Failed to upload: ${fileName}`);
-                    }
-
-                    // Remove from queue after processing
-                    batchQueue.shift();
+              // Update cancel button handler with job_id
+              const cancelBtn = jobElement.querySelector(".cancel-btn");
+              cancelBtn.onclick = async () => {
+                try {
+                  const resp = await fetchWithAuth(
+                    `/api/transcribe/${data.job_id}`,
+                    { method: "DELETE" },
+                  );
+                  if (resp.ok) {
+                    showToast("Cancellation requested");
+                  } else {
+                    const d = await resp.json();
+                    showToast(d.error || "Failed to cancel job");
+                  }
+                } catch (err) {
+                  console.error("Cancel error:", err);
+                  showToast("Failed to cancel job");
                 }
+              };
 
-                isProcessingBatch = false;
-            };
+              // Wait for job completion
+              await waitForJobCompletion(data.job_id, jobElement, fileName);
+            } catch (error) {
+              console.error("File upload error:", error);
+              statusSpan.textContent = "Upload failed";
+              statusSpan.className = "status text-red-600";
+              showToast(`Failed to upload: ${fileName}`);
+            }
 
-            // Wait for a job to complete before processing next
-            const waitForJobCompletion = (jobId, jobElement, fileName) => {
-                return new Promise((resolve) => {
-                    const interval = setInterval(async () => {
-                        try {
-                            const response = await fetchWithAuth(`/api/transcribe/status/${jobId}`);
-                            const data = await response.json();
+            // Remove from queue after processing
+            batchQueue.shift();
+          }
 
-                            if (response.ok) {
-                                const statusSpan = jobElement.querySelector('.status');
-                                const cancelBtn = jobElement.querySelector('.cancel-btn');
-                                const actionButtons = jobElement.querySelector('.action-buttons');
+          isProcessingBatch = false;
+        };
 
-                                if (data.status === 'completed' || data.status === 'error' || data.status === 'cancelled') {
-                                    clearInterval(interval);
-
-                                    statusSpan.textContent = data.status === 'completed' ? 'Completed' : data.status;
-                                    statusSpan.className = data.status === 'completed' ? 'status text-green-600' :
-                                                          data.status === 'cancelled' ? 'status text-gray-500' : 'status text-red-600';
-
-                                    // Hide cancel button
-                                    if (cancelBtn) cancelBtn.classList.add('hidden');
-
-                                    // Show result
-                                    const resultDiv = jobElement.querySelector('.result');
-                                    resultDiv.textContent = data.result || (data.status === 'cancelled' ? 'Job was cancelled' : 'No result');
-                                    resultDiv.classList.remove('hidden');
-
-                                    // Show action buttons for completed jobs
-                                    if (data.status === 'completed' && actionButtons) {
-                                        actionButtons.classList.remove('hidden');
-                                    }
-
-                                    // Style cancelled/error jobs
-                                    if (data.status === 'cancelled' || data.status === 'error') {
-                                        jobElement.classList.add('opacity-60');
-                                    }
-
-                                    resolve();
-                                } else {
-                                    // Still processing
-                                    statusSpan.textContent = data.status || 'Processing...';
-                                }
-                            } else {
-                                clearInterval(interval);
-                                resolve();
-                            }
-                        } catch (error) {
-                            console.error(`Error polling job ${jobId}:`, error);
-                            clearInterval(interval);
-                            resolve();
-                        }
-                    }, 1500);
-                });
-            };
-
-            uploadButton.addEventListener('click', async () => {
-                const files = fileUpload.files;
-                if (!files || files.length === 0) {
-                    alert('Please select at least one file to upload.');
-                    return;
-                }
-
-                // Add all files to queue UI with duration
-                for (const file of files) {
-                    const queueId = ++queueIdCounter;
-                    const duration = await getMediaDuration(file);
-
-                    // Add to queue
-                    batchQueue.push({ file, queueId, fileName: file.name, duration });
-
-                    // Add to UI
-                    addQueuedItemToUI(queueId, file.name, duration);
-                }
-
-                // Clear file input
-                fileUpload.value = '';
-                filesSelectedText.textContent = '';
-
-                // Start processing queue
-                processBatchQueue();
-            });
-
-            function generateUUID() {
-                return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
-                    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+        // Wait for a job to complete before processing next
+        const waitForJobCompletion = (jobId, jobElement, fileName) => {
+          return new Promise((resolve) => {
+            const interval = setInterval(async () => {
+              try {
+                const response = await fetchWithAuth(
+                  `/api/transcribe/status/${jobId}`,
                 );
-            }
+                const data = await response.json();
 
-            // Format time in seconds to HH:MM:SS format
-            function formatTime(seconds) {
-                const hours = Math.floor(seconds / 3600);
-                const mins = Math.floor((seconds % 3600) / 60);
-                const secs = Math.floor(seconds % 60);
-                return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-            }
+                if (response.ok) {
+                  const statusSpan = jobElement.querySelector(".status");
+                  const cancelBtn = jobElement.querySelector(".cancel-btn");
+                  const actionButtons =
+                    jobElement.querySelector(".action-buttons");
 
-            startButton.addEventListener('click', startRecording);
-            stopButton.addEventListener('click', stopRecording);
-            toastClose.addEventListener('click', hideToast);
+                  if (
+                    data.status === "completed" ||
+                    data.status === "error" ||
+                    data.status === "cancelled"
+                  ) {
+                    clearInterval(interval);
 
-            // Edit transcript functionality
-            const editButton = document.getElementById('edit-button');
-            const transcriptContainer = document.getElementById('transcript-container');
-            const editHint = document.getElementById('edit-hint');
-            let isEditing = false;
+                    statusSpan.textContent =
+                      data.status === "completed" ? "Completed" : data.status;
+                    statusSpan.className =
+                      data.status === "completed"
+                        ? "status text-green-600"
+                        : data.status === "cancelled"
+                          ? "status text-gray-500"
+                          : "status text-red-600";
 
-            const enableEditing = () => {
-                isEditing = true;
-                transcriptContainer.contentEditable = true;
-                transcriptContainer.classList.add('bg-white', 'border-2', 'border-blue-300', 'p-2', 'rounded');
-                editButton.textContent = 'Done';
-                editButton.classList.remove('bg-gray-200');
-                editButton.classList.add('bg-blue-500', 'text-white');
-                editHint.classList.remove('hidden');
-                transcriptContainer.focus();
-            };
+                    // Hide cancel button
+                    if (cancelBtn) cancelBtn.classList.add("hidden");
 
-            const disableEditing = () => {
-                isEditing = false;
-                transcriptContainer.contentEditable = false;
-                transcriptContainer.classList.remove('bg-white', 'border-2', 'border-blue-300', 'p-2', 'rounded');
-                editButton.textContent = 'Edit';
-                editButton.classList.add('bg-gray-200');
-                editButton.classList.remove('bg-blue-500', 'text-white');
-                editHint.classList.add('hidden');
-            };
+                    // Show result
+                    const resultDiv = jobElement.querySelector(".result");
+                    resultDiv.textContent =
+                      data.result ||
+                      (data.status === "cancelled"
+                        ? "Job was cancelled"
+                        : "No result");
+                    resultDiv.classList.remove("hidden");
 
-            editButton.addEventListener('click', () => {
-                if (isEditing) {
-                    disableEditing();
+                    // Show action buttons for completed jobs
+                    if (data.status === "completed" && actionButtons) {
+                      actionButtons.classList.remove("hidden");
+                    }
+
+                    // Style cancelled/error jobs
+                    if (
+                      data.status === "cancelled" ||
+                      data.status === "error"
+                    ) {
+                      jobElement.classList.add("opacity-60");
+                    }
+
+                    resolve();
+                  } else {
+                    // Still processing
+                    statusSpan.textContent = data.status || "Processing...";
+                  }
                 } else {
-                    enableEditing();
+                  clearInterval(interval);
+                  resolve();
                 }
-            });
+              } catch (error) {
+                console.error(`Error polling job ${jobId}:`, error);
+                clearInterval(interval);
+                resolve();
+              }
+            }, 1500);
+          });
+        };
 
-            // Exit edit mode on Escape (only when editing transcript)
-            transcriptContainer.addEventListener('keydown', (e) => {
-                if (e.code === 'Escape' && isEditing) {
-                    disableEditing();
-                }
-            });
+        uploadButton.addEventListener("click", async () => {
+          const files = fileUpload.files;
+          if (!files || files.length === 0) {
+            alert("Please select at least one file to upload.");
+            return;
+          }
 
-            // Keyboard shortcuts
-            document.addEventListener('keydown', (e) => {
-                // Don't trigger shortcuts when typing in form fields or editing transcript
-                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || isEditing) {
-                    return;
-                }
+          // Add all files to queue UI with duration
+          for (const file of files) {
+            const queueId = ++queueIdCounter;
+            const duration = await getMediaDuration(file);
 
-                // Space: Toggle recording
-                if (e.code === 'Space' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-                    e.preventDefault();
-                    if (!startButton.disabled) {
-                        startRecording();
-                    } else if (!stopButton.disabled) {
-                        stopRecording();
-                    }
-                }
+            // Add to queue
+            batchQueue.push({ file, queueId, fileName: file.name, duration });
 
-                // Escape: Stop recording
-                if (e.code === 'Escape') {
-                    if (!stopButton.disabled) {
-                        stopRecording();
-                    }
-                }
+            // Add to UI
+            addQueuedItemToUI(queueId, file.name, duration);
+          }
 
-                // Ctrl/Cmd + C: Copy transcript (when not selecting text)
-                if ((e.ctrlKey || e.metaKey) && e.code === 'KeyC') {
-                    const selection = window.getSelection();
-                    // Only handle if no text is selected (allow normal copy behavior otherwise)
-                    if (!selection || selection.toString().length === 0) {
-                        e.preventDefault();
-                        const text = finalTranscriptSpan.textContent.trim();
-                        if (text) {
-                            navigator.clipboard.writeText(text).then(() => {
-                                showToast('Transcript copied to clipboard!');
-                            });
-                        }
-                    }
-                }
+          // Clear file input
+          fileUpload.value = "";
+          filesSelectedText.textContent = "";
 
-                // Ctrl/Cmd + S: Download transcript as text
-                if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
-                    e.preventDefault();
-                    const text = finalTranscriptSpan.textContent.trim();
-                    if (text) {
-                        const blob = new Blob([text], { type: 'text/plain' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `transcript_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.txt`;
-                        a.click();
-                        URL.revokeObjectURL(url);
-                        showToast('Transcript downloaded!');
-                    }
-                }
-            });
-
-            document.getElementById('vad_prob_threshold').addEventListener('input', (e) => {
-                document.getElementById('vad_prob_threshold_output').textContent = parseFloat(e.target.value).toFixed(2);
-            });
-
-            initialize();
+          // Start processing queue
+          processBatchQueue();
         });
+
+        function generateUUID() {
+          return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, (c) =>
+            (
+              c ^
+              (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))
+            ).toString(16),
+          );
+        }
+
+        // Format time in seconds to HH:MM:SS format
+        function formatTime(seconds) {
+          const hours = Math.floor(seconds / 3600);
+          const mins = Math.floor((seconds % 3600) / 60);
+          const secs = Math.floor(seconds % 60);
+          return `${hours.toString().padStart(2, "0")}:${mins
+            .toString()
+            .padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+        }
+
+        startButton.addEventListener("click", startRecording);
+        stopButton.addEventListener("click", stopRecording);
+        toastClose.addEventListener("click", hideToast);
+
+        // Edit transcript functionality
+        const editButton = document.getElementById("edit-button");
+        const transcriptContainer = document.getElementById(
+          "transcript-container",
+        );
+        const editHint = document.getElementById("edit-hint");
+        let isEditing = false;
+
+        const enableEditing = () => {
+          isEditing = true;
+          transcriptContainer.contentEditable = true;
+          transcriptContainer.classList.add(
+            "bg-white",
+            "border-2",
+            "border-blue-300",
+            "p-2",
+            "rounded",
+          );
+          editButton.textContent = "Done";
+          editButton.classList.remove("bg-gray-200");
+          editButton.classList.add("bg-blue-500", "text-white");
+          editHint.classList.remove("hidden");
+          transcriptContainer.focus();
+        };
+
+        const disableEditing = () => {
+          isEditing = false;
+          transcriptContainer.contentEditable = false;
+          transcriptContainer.classList.remove(
+            "bg-white",
+            "border-2",
+            "border-blue-300",
+            "p-2",
+            "rounded",
+          );
+          editButton.textContent = "Edit";
+          editButton.classList.add("bg-gray-200");
+          editButton.classList.remove("bg-blue-500", "text-white");
+          editHint.classList.add("hidden");
+        };
+
+        editButton.addEventListener("click", () => {
+          if (isEditing) {
+            disableEditing();
+          } else {
+            enableEditing();
+          }
+        });
+
+        // Exit edit mode on Escape (only when editing transcript)
+        transcriptContainer.addEventListener("keydown", (e) => {
+          if (e.code === "Escape" && isEditing) {
+            disableEditing();
+          }
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener("keydown", (e) => {
+          // Don't trigger shortcuts when typing in form fields or editing transcript
+          if (
+            e.target.tagName === "INPUT" ||
+            e.target.tagName === "TEXTAREA" ||
+            e.target.tagName === "SELECT" ||
+            isEditing
+          ) {
+            return;
+          }
+
+          // Space: Toggle recording
+          if (e.code === "Space" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            e.preventDefault();
+            if (!startButton.disabled) {
+              startRecording();
+            } else if (!stopButton.disabled) {
+              stopRecording();
+            }
+          }
+
+          // Escape: Stop recording
+          if (e.code === "Escape") {
+            if (!stopButton.disabled) {
+              stopRecording();
+            }
+          }
+
+          // Ctrl/Cmd + C: Copy transcript (when not selecting text)
+          if ((e.ctrlKey || e.metaKey) && e.code === "KeyC") {
+            const selection = window.getSelection();
+            // Only handle if no text is selected (allow normal copy behavior otherwise)
+            if (!selection || selection.toString().length === 0) {
+              e.preventDefault();
+              const text = finalTranscriptSpan.textContent.trim();
+              if (text) {
+                navigator.clipboard.writeText(text).then(() => {
+                  showToast("Transcript copied to clipboard!");
+                });
+              }
+            }
+          }
+
+          // Ctrl/Cmd + S: Download transcript as text
+          if ((e.ctrlKey || e.metaKey) && e.code === "KeyS") {
+            e.preventDefault();
+            const text = finalTranscriptSpan.textContent.trim();
+            if (text) {
+              const blob = new Blob([text], { type: "text/plain" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `transcript_${new Date()
+                .toISOString()
+                .slice(0, 19)
+                .replace(/:/g, "-")}.txt`;
+              a.click();
+              URL.revokeObjectURL(url);
+              showToast("Transcript downloaded!");
+            }
+          }
+        });
+
+        document
+          .getElementById("vad_prob_threshold")
+          .addEventListener("input", (e) => {
+            document.getElementById("vad_prob_threshold_output").textContent =
+              parseFloat(e.target.value).toFixed(2);
+          });
+
+        initialize();
+      });
     </script>
-</body>
+  </body>
 </html>

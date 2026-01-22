@@ -1,10 +1,9 @@
 # tests/test_websocket_status.py
 """Tests for WebSocket status messages during model loading."""
 
-import asyncio
-import json
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
 
 pytestmark = pytest.mark.asyncio
 
@@ -14,17 +13,23 @@ class TestWebSocketStatusMessages:
 
     def test_websocket_sends_status_on_connect(self, sync_test_client):
         """WebSocket should send status messages during model loading."""
-        with patch('main.get_whisper_model') as mock_get_model, \
-             patch('main.is_model_cached', return_value=True):
+        with (
+            patch("main.get_whisper_model") as mock_get_model,
+            patch("main.is_model_cached", return_value=True),
+        ):
 
             async def mock_model_loader(*args, **kwargs):
                 return MagicMock()
 
             mock_get_model.return_value = mock_model_loader()
 
-            with sync_test_client.websocket_connect("/ws/test-status-session") as websocket:
+            with sync_test_client.websocket_connect(
+                "/ws/test-status-session"
+            ) as websocket:
                 # Send config
-                websocket.send_json({"model": "tiny", "device": "cpu", "language": "en"})
+                websocket.send_json(
+                    {"model": "tiny", "device": "cpu", "language": "en"}
+                )
 
                 # Should receive status message
                 try:
@@ -62,8 +67,12 @@ class TestWebSocketErrorHandling:
         models = ["tiny", "base", "small"]
         for model in models:
             try:
-                with sync_test_client.websocket_connect(f"/ws/test-model-{model}") as websocket:
-                    websocket.send_json({"model": model, "device": "cpu", "language": "en"})
+                with sync_test_client.websocket_connect(
+                    f"/ws/test-model-{model}"
+                ) as websocket:
+                    websocket.send_json(
+                        {"model": model, "device": "cpu", "language": "en"}
+                    )
             except Exception:
                 pass  # Model loading may fail in test environment
 
@@ -81,7 +90,7 @@ class TestStatusMessageTypes:
             "type": "status",
             "status": "loading",
             "message": "Loading tiny on cpu...",
-            "progress": 0.5
+            "progress": 0.5,
         }
 
         assert status_msg["type"] == "status"
@@ -108,8 +117,12 @@ class TestWebSocketSessionManagement:
             session_id = f"unique-test-session-{i}"
             session_ids.add(session_id)
             try:
-                with sync_test_client.websocket_connect(f"/ws/{session_id}") as websocket:
-                    websocket.send_json({"model": "tiny", "device": "cpu", "language": "en"})
+                with sync_test_client.websocket_connect(
+                    f"/ws/{session_id}"
+                ) as websocket:
+                    websocket.send_json(
+                        {"model": "tiny", "device": "cpu", "language": "en"}
+                    )
             except Exception:
                 pass
 
@@ -121,8 +134,12 @@ class TestWebSocketSessionManagement:
         languages = ["en", "es", "fr", "de", "ja"]
         for lang in languages:
             try:
-                with sync_test_client.websocket_connect(f"/ws/test-lang-{lang}") as websocket:
-                    websocket.send_json({"model": "tiny", "device": "cpu", "language": lang})
+                with sync_test_client.websocket_connect(
+                    f"/ws/test-lang-{lang}"
+                ) as websocket:
+                    websocket.send_json(
+                        {"model": "tiny", "device": "cpu", "language": lang}
+                    )
             except Exception:
                 pass  # Expected in test environment
 
@@ -137,14 +154,18 @@ class TestWebSocketReconnection:
         # First connection
         try:
             with sync_test_client.websocket_connect(f"/ws/{session_id}") as websocket:
-                websocket.send_json({"model": "tiny", "device": "cpu", "language": "en"})
+                websocket.send_json(
+                    {"model": "tiny", "device": "cpu", "language": "en"}
+                )
         except Exception:
             pass
 
         # Second connection with same ID (should work)
         try:
             with sync_test_client.websocket_connect(f"/ws/{session_id}") as websocket:
-                websocket.send_json({"model": "tiny", "device": "cpu", "language": "en"})
+                websocket.send_json(
+                    {"model": "tiny", "device": "cpu", "language": "en"}
+                )
         except Exception:
             pass
 
@@ -154,42 +175,53 @@ class TestWebSocketConfigValidation:
 
     def test_invalid_model_name_rejected(self, sync_test_client):
         """WebSocket should reject invalid model names."""
-        with pytest.raises(Exception):
-            with sync_test_client.websocket_connect("/ws/test-invalid-model") as websocket:
+        with pytest.raises(Exception):  # noqa: B017
+            with sync_test_client.websocket_connect(
+                "/ws/test-invalid-model"
+            ) as websocket:
                 # Send invalid model name
-                websocket.send_json({
-                    "model": "../../malicious/path",
-                    "device": "cpu",
-                    "language": "en"
-                })
+                websocket.send_json(
+                    {"model": "../../malicious/path", "device": "cpu", "language": "en"}
+                )
                 # Should receive error message
                 data = websocket.receive_json()
                 assert data.get("type") == "error" or data.get("status") == "error"
 
     def test_invalid_device_rejected(self, sync_test_client):
         """WebSocket should reject invalid device names."""
-        with pytest.raises(Exception):
-            with sync_test_client.websocket_connect("/ws/test-invalid-device") as websocket:
-                websocket.send_json({
-                    "model": "tiny",
-                    "device": "cuda:999",  # Invalid CUDA device
-                    "language": "en"
-                })
+        with pytest.raises(Exception):  # noqa: B017
+            with sync_test_client.websocket_connect(
+                "/ws/test-invalid-device"
+            ) as websocket:
+                websocket.send_json(
+                    {
+                        "model": "tiny",
+                        "device": "cuda:999",  # Invalid CUDA device
+                        "language": "en",
+                    }
+                )
                 data = websocket.receive_json()
                 assert data.get("type") == "error" or data.get("status") == "error"
 
     def test_valid_model_names_accepted(self, sync_test_client):
         """WebSocket should accept valid model names."""
-        valid_models = ["tiny", "base", "small", "medium", "large-v3", "distil-large-v3"]
+        valid_models = [
+            "tiny",
+            "base",
+            "small",
+            "medium",
+            "large-v3",
+            "distil-large-v3",
+        ]
 
         for model in valid_models:
             try:
-                with sync_test_client.websocket_connect(f"/ws/test-valid-model-{model}") as websocket:
-                    websocket.send_json({
-                        "model": model,
-                        "device": "cpu",
-                        "language": "en"
-                    })
+                with sync_test_client.websocket_connect(
+                    f"/ws/test-valid-model-{model}"
+                ) as websocket:
+                    websocket.send_json(
+                        {"model": model, "device": "cpu", "language": "en"}
+                    )
                     # If we receive any status message, config was accepted
             except Exception:
                 pass  # Model loading may fail, but config validation should pass
@@ -200,12 +232,12 @@ class TestWebSocketConfigValidation:
 
         for device in valid_devices:
             try:
-                with sync_test_client.websocket_connect(f"/ws/test-valid-device-{device}") as websocket:
-                    websocket.send_json({
-                        "model": "tiny",
-                        "device": device,
-                        "language": "en"
-                    })
+                with sync_test_client.websocket_connect(
+                    f"/ws/test-valid-device-{device}"
+                ) as websocket:
+                    websocket.send_json(
+                        {"model": "tiny", "device": device, "language": "en"}
+                    )
             except Exception:
                 pass  # Device may not be available, but validation should pass
 
@@ -213,13 +245,13 @@ class TestWebSocketConfigValidation:
         """WebSocket should reject excessively long session IDs."""
         long_session_id = "a" * 1000  # Very long session ID
 
-        with pytest.raises(Exception):
-            with sync_test_client.websocket_connect(f"/ws/{long_session_id}") as websocket:
-                websocket.send_json({
-                    "model": "tiny",
-                    "device": "cpu",
-                    "language": "en"
-                })
+        with pytest.raises(Exception):  # noqa: B017
+            with sync_test_client.websocket_connect(
+                f"/ws/{long_session_id}"
+            ) as websocket:
+                websocket.send_json(
+                    {"model": "tiny", "device": "cpu", "language": "en"}
+                )
 
     def test_session_id_valid_characters(self, sync_test_client):
         """WebSocket should reject session IDs with invalid characters."""
@@ -231,7 +263,7 @@ class TestWebSocketConfigValidation:
 
         for session_id in invalid_session_ids:
             try:
-                with sync_test_client.websocket_connect(f"/ws/{session_id}") as websocket:
+                with sync_test_client.websocket_connect(f"/ws/{session_id}"):
                     pass
             except Exception:
                 pass  # Should fail for invalid session IDs

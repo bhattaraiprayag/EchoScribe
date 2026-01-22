@@ -1,9 +1,9 @@
 # tests/test_pipeline.py
 """Tests for the transcription pipeline, including context management."""
 
-import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 
 pytestmark = pytest.mark.asyncio
 
@@ -78,7 +78,10 @@ class TestTranscriptionContext:
         TranscriptionSession._update_transcription_context(session, "", 224)
 
         # Should remain unchanged or just have existing trimmed
-        assert "existing" in session.transcription_context or session.transcription_context == "existing"
+        assert (
+            "existing" in session.transcription_context
+            or session.transcription_context == "existing"
+        )
 
     def test_update_transcription_context_handles_special_characters(self):
         """Context should handle punctuation and unicode safely."""
@@ -110,19 +113,25 @@ class TestWhisperWorkerContextUsage:
         mock_segment.text = "Test transcription"
         mock_whisper_model.transcribe.return_value = ([mock_segment], MagicMock())
 
-        with patch.object(TranscriptionSession, 'load_vad_model', return_value=(MagicMock(), MagicMock())):
+        with patch.object(
+            TranscriptionSession,
+            "load_vad_model",
+            return_value=(MagicMock(), MagicMock()),
+        ):
             session = TranscriptionSession(
                 session_id="test-123",
                 websocket=mock_websocket,
                 config={"model": "tiny", "device": "cpu", "language": "en"},
-                whisper_model=mock_whisper_model
+                whisper_model=mock_whisper_model,
             )
 
         # Verify initial context is empty
         assert session.transcription_context == ""
 
         # Put a final task in the queue
-        await session.transcription_queue.put({"audio": b"\x00\x01" * 100, "type": "final"})
+        await session.transcription_queue.put(
+            {"audio": b"\x00\x01" * 100, "type": "final"}
+        )
         await session.transcription_queue.put(None)  # Signal end
 
         # Run the worker task
@@ -142,16 +151,22 @@ class TestWhisperWorkerContextUsage:
         mock_segment.text = "Interim text"
         mock_whisper_model.transcribe.return_value = ([mock_segment], MagicMock())
 
-        with patch.object(TranscriptionSession, 'load_vad_model', return_value=(MagicMock(), MagicMock())):
+        with patch.object(
+            TranscriptionSession,
+            "load_vad_model",
+            return_value=(MagicMock(), MagicMock()),
+        ):
             session = TranscriptionSession(
                 session_id="test-123",
                 websocket=mock_websocket,
                 config={"model": "tiny", "device": "cpu", "language": "en"},
-                whisper_model=mock_whisper_model
+                whisper_model=mock_whisper_model,
             )
 
         # Put an interim task in the queue
-        await session.transcription_queue.put({"audio": b"\x00\x01" * 100, "type": "interim"})
+        await session.transcription_queue.put(
+            {"audio": b"\x00\x01" * 100, "type": "interim"}
+        )
         await session.transcription_queue.put(None)
 
         await session.whisper_worker_task()
@@ -170,18 +185,24 @@ class TestWhisperWorkerContextUsage:
         mock_segment.text = "New text"
         mock_whisper_model.transcribe.return_value = ([mock_segment], MagicMock())
 
-        with patch.object(TranscriptionSession, 'load_vad_model', return_value=(MagicMock(), MagicMock())):
+        with patch.object(
+            TranscriptionSession,
+            "load_vad_model",
+            return_value=(MagicMock(), MagicMock()),
+        ):
             session = TranscriptionSession(
                 session_id="test-123",
                 websocket=mock_websocket,
                 config={"model": "tiny", "device": "cpu", "language": "en"},
-                whisper_model=mock_whisper_model
+                whisper_model=mock_whisper_model,
             )
 
         # Set existing context
         session.transcription_context = "Previous context"
 
-        await session.transcription_queue.put({"audio": b"\x00\x01" * 100, "type": "final"})
+        await session.transcription_queue.put(
+            {"audio": b"\x00\x01" * 100, "type": "final"}
+        )
         await session.transcription_queue.put(None)
 
         await session.whisper_worker_task()
@@ -191,7 +212,7 @@ class TestWhisperWorkerContextUsage:
         assert call_kwargs is not None
         # Check if initial_prompt was passed (either in args or kwargs)
         if call_kwargs.kwargs:
-            assert call_kwargs.kwargs.get('initial_prompt') == "Previous context"
+            assert call_kwargs.kwargs.get("initial_prompt") == "Previous context"
 
 
 class TestWordLevelStreaming:
@@ -223,20 +244,32 @@ class TestWordLevelStreaming:
 
         mock_whisper_model.transcribe.return_value = ([mock_segment], MagicMock())
 
-        with patch.object(TranscriptionSession, 'load_vad_model', return_value=(MagicMock(), MagicMock())):
-            with patch('backend.pipeline.config_data', {
-                'transcription_parameters': {'context_max_length': 224, 'word_timestamps': True},
-                'vad_parameters': {},
-                'audio_parameters': {}
-            }):
+        with patch.object(
+            TranscriptionSession,
+            "load_vad_model",
+            return_value=(MagicMock(), MagicMock()),
+        ):
+            with patch(
+                "backend.pipeline.config_data",
+                {
+                    "transcription_parameters": {
+                        "context_max_length": 224,
+                        "word_timestamps": True,
+                    },
+                    "vad_parameters": {},
+                    "audio_parameters": {},
+                },
+            ):
                 session = TranscriptionSession(
                     session_id="test-word-stream",
                     websocket=mock_websocket,
                     config={"model": "tiny", "device": "cpu", "language": "en"},
-                    whisper_model=mock_whisper_model
+                    whisper_model=mock_whisper_model,
                 )
 
-        await session.transcription_queue.put({"audio": b"\x00\x01" * 100, "type": "final"})
+        await session.transcription_queue.put(
+            {"audio": b"\x00\x01" * 100, "type": "final"}
+        )
         await session.transcription_queue.put(None)
 
         await session.whisper_worker_task()
@@ -244,7 +277,7 @@ class TestWordLevelStreaming:
         # Verify word_timestamps=True was passed to transcribe
         call_kwargs = mock_whisper_model.transcribe.call_args
         assert call_kwargs is not None
-        assert call_kwargs.kwargs.get('word_timestamps') is True
+        assert call_kwargs.kwargs.get("word_timestamps") is True
 
     async def test_word_timestamps_disabled_no_word_events(self):
         """When word_timestamps is disabled, no word events should be emitted."""
@@ -261,20 +294,32 @@ class TestWordLevelStreaming:
 
         mock_whisper_model.transcribe.return_value = ([mock_segment], MagicMock())
 
-        with patch.object(TranscriptionSession, 'load_vad_model', return_value=(MagicMock(), MagicMock())):
-            with patch('backend.pipeline.config_data', {
-                'transcription_parameters': {'context_max_length': 224, 'word_timestamps': False},
-                'vad_parameters': {},
-                'audio_parameters': {}
-            }):
+        with patch.object(
+            TranscriptionSession,
+            "load_vad_model",
+            return_value=(MagicMock(), MagicMock()),
+        ):
+            with patch(
+                "backend.pipeline.config_data",
+                {
+                    "transcription_parameters": {
+                        "context_max_length": 224,
+                        "word_timestamps": False,
+                    },
+                    "vad_parameters": {},
+                    "audio_parameters": {},
+                },
+            ):
                 session = TranscriptionSession(
                     session_id="test-no-word-stream",
                     websocket=mock_websocket,
                     config={"model": "tiny", "device": "cpu", "language": "en"},
-                    whisper_model=mock_whisper_model
+                    whisper_model=mock_whisper_model,
                 )
 
-        await session.transcription_queue.put({"audio": b"\x00\x01" * 100, "type": "final"})
+        await session.transcription_queue.put(
+            {"audio": b"\x00\x01" * 100, "type": "final"}
+        )
         await session.transcription_queue.put(None)
 
         await session.whisper_worker_task()
@@ -282,7 +327,7 @@ class TestWordLevelStreaming:
         # Verify word_timestamps was either False or not passed
         call_kwargs = mock_whisper_model.transcribe.call_args
         assert call_kwargs is not None
-        word_ts = call_kwargs.kwargs.get('word_timestamps', False)
+        word_ts = call_kwargs.kwargs.get("word_timestamps", False)
         assert word_ts is False
 
     async def test_word_events_include_timestamps(self):
@@ -305,20 +350,32 @@ class TestWordLevelStreaming:
 
         mock_whisper_model.transcribe.return_value = ([mock_segment], MagicMock())
 
-        with patch.object(TranscriptionSession, 'load_vad_model', return_value=(MagicMock(), MagicMock())):
-            with patch('backend.pipeline.config_data', {
-                'transcription_parameters': {'context_max_length': 224, 'word_timestamps': True},
-                'vad_parameters': {},
-                'audio_parameters': {}
-            }):
+        with patch.object(
+            TranscriptionSession,
+            "load_vad_model",
+            return_value=(MagicMock(), MagicMock()),
+        ):
+            with patch(
+                "backend.pipeline.config_data",
+                {
+                    "transcription_parameters": {
+                        "context_max_length": 224,
+                        "word_timestamps": True,
+                    },
+                    "vad_parameters": {},
+                    "audio_parameters": {},
+                },
+            ):
                 session = TranscriptionSession(
                     session_id="test-word-ts",
                     websocket=mock_websocket,
                     config={"model": "tiny", "device": "cpu", "language": "en"},
-                    whisper_model=mock_whisper_model
+                    whisper_model=mock_whisper_model,
                 )
 
-        await session.transcription_queue.put({"audio": b"\x00\x01" * 100, "type": "final"})
+        await session.transcription_queue.put(
+            {"audio": b"\x00\x01" * 100, "type": "final"}
+        )
         await session.transcription_queue.put(None)
 
         await session.whisper_worker_task()
@@ -331,12 +388,12 @@ class TestWordLevelStreaming:
                 results.append(result)
 
         # Should have word events before final segment
-        word_events = [r for r in results if r.get('type') == 'word']
+        word_events = [r for r in results if r.get("type") == "word"]
         if word_events:
             word_event = word_events[0]
-            assert 'text' in word_event
-            assert 'start' in word_event
-            assert 'end' in word_event
+            assert "text" in word_event
+            assert "start" in word_event
+            assert "end" in word_event
 
 
 class TestCumulativeTimestamps:
@@ -349,15 +406,19 @@ class TestCumulativeTimestamps:
         mock_websocket = MagicMock()
         mock_whisper_model = MagicMock()
 
-        with patch.object(TranscriptionSession, 'load_vad_model', return_value=(MagicMock(), MagicMock())):
+        with patch.object(
+            TranscriptionSession,
+            "load_vad_model",
+            return_value=(MagicMock(), MagicMock()),
+        ):
             session = TranscriptionSession(
                 session_id="test-timestamp",
                 websocket=mock_websocket,
                 config={"model": "tiny", "device": "cpu", "language": "en"},
-                whisper_model=mock_whisper_model
+                whisper_model=mock_whisper_model,
             )
 
-        assert hasattr(session, 'cumulative_audio_duration')
+        assert hasattr(session, "cumulative_audio_duration")
         assert session.cumulative_audio_duration == 0.0
 
     async def test_timestamps_include_cumulative_offset(self):
@@ -375,19 +436,23 @@ class TestCumulativeTimestamps:
 
         mock_whisper_model.transcribe.return_value = ([mock_segment], MagicMock())
 
-        with patch.object(TranscriptionSession, 'load_vad_model', return_value=(MagicMock(), MagicMock())):
+        with patch.object(
+            TranscriptionSession,
+            "load_vad_model",
+            return_value=(MagicMock(), MagicMock()),
+        ):
             session = TranscriptionSession(
                 session_id="test-cumulative",
                 websocket=mock_websocket,
                 config={"model": "tiny", "device": "cpu", "language": "en"},
-                whisper_model=mock_whisper_model
+                whisper_model=mock_whisper_model,
             )
 
         # Simulate that 10 seconds of audio have already been processed
         session.cumulative_audio_duration = 10.0
 
         # Put a final task with 2 seconds of audio (16000 samples/sec * 2 bytes * 2 sec)
-        audio_bytes = b'\x00' * 64000  # 2 seconds of audio
+        audio_bytes = b"\x00" * 64000  # 2 seconds of audio
         await session.transcription_queue.put({"audio": audio_bytes, "type": "final"})
         await session.transcription_queue.put(None)
 
@@ -399,8 +464,8 @@ class TestCumulativeTimestamps:
         # Timestamps should be offset by cumulative duration (10.0)
         # Whisper returned start=0.5, end=2.0, so final should be start=10.5, end=12.0
         assert result is not None
-        assert result['start'] == 10.5
-        assert result['end'] == 12.0
+        assert result["start"] == 10.5
+        assert result["end"] == 12.0
 
     async def test_cumulative_duration_updates_after_final_transcription(self):
         """cumulative_audio_duration should update after final transcription."""
@@ -416,23 +481,30 @@ class TestCumulativeTimestamps:
 
         mock_whisper_model.transcribe.return_value = ([mock_segment], MagicMock())
 
-        with patch.object(TranscriptionSession, 'load_vad_model', return_value=(MagicMock(), MagicMock())):
-            with patch('backend.pipeline.config_data', {
-                'transcription_parameters': {'context_max_length': 224},
-                'vad_parameters': {},
-                'audio_parameters': {'sample_rate': 16000, 'sample_width': 2}
-            }):
+        with patch.object(
+            TranscriptionSession,
+            "load_vad_model",
+            return_value=(MagicMock(), MagicMock()),
+        ):
+            with patch(
+                "backend.pipeline.config_data",
+                {
+                    "transcription_parameters": {"context_max_length": 224},
+                    "vad_parameters": {},
+                    "audio_parameters": {"sample_rate": 16000, "sample_width": 2},
+                },
+            ):
                 session = TranscriptionSession(
                     session_id="test-duration-update",
                     websocket=mock_websocket,
                     config={"model": "tiny", "device": "cpu", "language": "en"},
-                    whisper_model=mock_whisper_model
+                    whisper_model=mock_whisper_model,
                 )
 
         assert session.cumulative_audio_duration == 0.0
 
         # Send 3 seconds of audio (16000 * 2 * 3 = 96000 bytes)
-        audio_bytes = b'\x00' * 96000
+        audio_bytes = b"\x00" * 96000
         await session.transcription_queue.put({"audio": audio_bytes, "type": "final"})
         await session.transcription_queue.put(None)
 
@@ -455,24 +527,31 @@ class TestCumulativeTimestamps:
 
         mock_whisper_model.transcribe.return_value = ([mock_segment], MagicMock())
 
-        with patch.object(TranscriptionSession, 'load_vad_model', return_value=(MagicMock(), MagicMock())):
-            with patch('backend.pipeline.config_data', {
-                'transcription_parameters': {'context_max_length': 224},
-                'vad_parameters': {},
-                'audio_parameters': {'sample_rate': 16000, 'sample_width': 2}
-            }):
+        with patch.object(
+            TranscriptionSession,
+            "load_vad_model",
+            return_value=(MagicMock(), MagicMock()),
+        ):
+            with patch(
+                "backend.pipeline.config_data",
+                {
+                    "transcription_parameters": {"context_max_length": 224},
+                    "vad_parameters": {},
+                    "audio_parameters": {"sample_rate": 16000, "sample_width": 2},
+                },
+            ):
                 session = TranscriptionSession(
                     session_id="test-interim-no-update",
                     websocket=mock_websocket,
                     config={"model": "tiny", "device": "cpu", "language": "en"},
-                    whisper_model=mock_whisper_model
+                    whisper_model=mock_whisper_model,
                 )
 
         # Set initial cumulative duration
         session.cumulative_audio_duration = 5.0
 
         # Send interim task
-        audio_bytes = b'\x00' * 32000  # 1 second
+        audio_bytes = b"\x00" * 32000  # 1 second
         await session.transcription_queue.put({"audio": audio_bytes, "type": "interim"})
         await session.transcription_queue.put(None)
 
@@ -480,8 +559,8 @@ class TestCumulativeTimestamps:
 
         # Get result - should have offset applied
         result = await session.results_queue.get()
-        assert result['start'] == 5.0  # 5.0 + 0.0
-        assert result['end'] == 6.0    # 5.0 + 1.0
+        assert result["start"] == 5.0  # 5.0 + 0.0
+        assert result["end"] == 6.0  # 5.0 + 1.0
 
         # But cumulative duration should NOT be updated for interim
         assert session.cumulative_audio_duration == 5.0
@@ -511,23 +590,30 @@ class TestCumulativeTimestamps:
             ([mock_segment2], MagicMock()),
         ]
 
-        with patch.object(TranscriptionSession, 'load_vad_model', return_value=(MagicMock(), MagicMock())):
-            with patch('backend.pipeline.config_data', {
-                'transcription_parameters': {'context_max_length': 224},
-                'vad_parameters': {},
-                'audio_parameters': {'sample_rate': 16000, 'sample_width': 2}
-            }):
+        with patch.object(
+            TranscriptionSession,
+            "load_vad_model",
+            return_value=(MagicMock(), MagicMock()),
+        ):
+            with patch(
+                "backend.pipeline.config_data",
+                {
+                    "transcription_parameters": {"context_max_length": 224},
+                    "vad_parameters": {},
+                    "audio_parameters": {"sample_rate": 16000, "sample_width": 2},
+                },
+            ):
                 session = TranscriptionSession(
                     session_id="test-accumulate",
                     websocket=mock_websocket,
                     config={"model": "tiny", "device": "cpu", "language": "en"},
-                    whisper_model=mock_whisper_model
+                    whisper_model=mock_whisper_model,
                 )
 
         # First chunk: 2 seconds
-        audio1 = b'\x00' * 64000
+        audio1 = b"\x00" * 64000
         # Second chunk: 1.5 seconds
-        audio2 = b'\x00' * 48000
+        audio2 = b"\x00" * 48000
 
         await session.transcription_queue.put({"audio": audio1, "type": "final"})
         await session.transcription_queue.put({"audio": audio2, "type": "final"})
@@ -537,15 +623,15 @@ class TestCumulativeTimestamps:
 
         # Get first result - should start at 0
         result1 = await session.results_queue.get()
-        assert result1['text'] == "First"
-        assert result1['start'] == 0.0
-        assert result1['end'] == 2.0
+        assert result1["text"] == "First"
+        assert result1["start"] == 0.0
+        assert result1["end"] == 2.0
 
         # Get second result - should start at 2.0 (after first chunk duration)
         result2 = await session.results_queue.get()
-        assert result2['text'] == "Second"
-        assert result2['start'] == 2.0   # 2.0 + 0.0
-        assert result2['end'] == 3.5     # 2.0 + 1.5
+        assert result2["text"] == "Second"
+        assert result2["start"] == 2.0  # 2.0 + 0.0
+        assert result2["end"] == 3.5  # 2.0 + 1.5
 
         # Cumulative should now be 3.5 seconds
         assert session.cumulative_audio_duration == 3.5
@@ -557,11 +643,12 @@ class TestBatchShortUtterances:
     def test_batch_config_defaults(self):
         """Batch config should have proper defaults."""
         from backend.config_manager import get_config
+
         config = get_config()
-        vad_params = config.get('vad_parameters', {})
+        vad_params = config.get("vad_parameters", {})
         # Should have batch settings
-        assert 'batch_short_utterances' in vad_params or True  # Optional
-        assert 'batch_min_duration' in vad_params or True  # Optional
+        assert "batch_short_utterances" in vad_params or True  # Optional
+        assert "batch_min_duration" in vad_params or True  # Optional
 
     def test_calculate_audio_duration(self):
         """Test audio duration calculation utility."""
@@ -572,12 +659,12 @@ class TestBatchShortUtterances:
         sample_width = 2
 
         # 1 second of audio = 16000 * 2 = 32000 bytes
-        audio_1sec = b'\x00' * 32000
+        audio_1sec = b"\x00" * 32000
         duration = _calculate_audio_duration(audio_1sec, sample_rate, sample_width)
         assert abs(duration - 1.0) < 0.01
 
         # 0.5 seconds of audio = 16000 bytes
-        audio_half_sec = b'\x00' * 16000
+        audio_half_sec = b"\x00" * 16000
         duration = _calculate_audio_duration(audio_half_sec, sample_rate, sample_width)
         assert abs(duration - 0.5) < 0.01
 
@@ -589,25 +676,32 @@ class TestBatchShortUtterances:
         mock_websocket = MagicMock()
         mock_whisper_model = MagicMock()
 
-        with patch.object(TranscriptionSession, 'load_vad_model', return_value=(MagicMock(), MagicMock())):
-            with patch('backend.pipeline.config_data', {
-                'transcription_parameters': {'context_max_length': 224},
-                'vad_parameters': {
-                    'batch_short_utterances': True,
-                    'batch_min_duration': 1.0,
-                    'min_speech_duration': 0.2,
-                    'silence_duration': 0.5,
-                    'prob_threshold': 0.5
+        with patch.object(
+            TranscriptionSession,
+            "load_vad_model",
+            return_value=(MagicMock(), MagicMock()),
+        ):
+            with patch(
+                "backend.pipeline.config_data",
+                {
+                    "transcription_parameters": {"context_max_length": 224},
+                    "vad_parameters": {
+                        "batch_short_utterances": True,
+                        "batch_min_duration": 1.0,
+                        "min_speech_duration": 0.2,
+                        "silence_duration": 0.5,
+                        "prob_threshold": 0.5,
+                    },
+                    "audio_parameters": {"sample_rate": 16000, "sample_width": 2},
                 },
-                'audio_parameters': {'sample_rate': 16000, 'sample_width': 2}
-            }):
+            ):
                 session = TranscriptionSession(
                     session_id="test-batch",
                     websocket=mock_websocket,
                     config={"model": "tiny", "device": "cpu", "language": "en"},
-                    whisper_model=mock_whisper_model
+                    whisper_model=mock_whisper_model,
                 )
 
         # Verify batch settings were loaded
-        assert session.vad_params.get('batch_short_utterances', False) is True
-        assert session.vad_params.get('batch_min_duration', 1.0) == 1.0
+        assert session.vad_params.get("batch_short_utterances", False) is True
+        assert session.vad_params.get("batch_min_duration", 1.0) == 1.0

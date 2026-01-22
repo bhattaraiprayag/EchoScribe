@@ -9,34 +9,25 @@ class VADParameters(BaseModel):
     """Voice Activity Detection parameters."""
 
     prob_threshold: Optional[float] = Field(
-        None,
-        ge=0.1,
-        le=0.9,
-        description="Speech probability threshold (0.1-0.9)"
+        None, ge=0.1, le=0.9, description="Speech probability threshold (0.1-0.9)"
     )
     silence_duration: Optional[float] = Field(
         None,
         ge=0.1,
         le=5.0,
-        description="Silence duration to end utterance (0.1-5 seconds)"
+        description="Silence duration to end utterance (0.1-5 seconds)",
     )
     min_speech_duration: Optional[float] = Field(
         None,
         ge=0.1,
         le=2.0,
-        description="Minimum speech duration to transcribe (0.1-2 seconds)"
+        description="Minimum speech duration to transcribe (0.1-2 seconds)",
     )
     sample_rate: Optional[int] = Field(
-        None,
-        ge=8000,
-        le=48000,
-        description="Sample rate for VAD (8000-48000 Hz)"
+        None, ge=8000, le=48000, description="Sample rate for VAD (8000-48000 Hz)"
     )
     window_size: Optional[int] = Field(
-        None,
-        ge=256,
-        le=2048,
-        description="VAD window size (256-2048 samples)"
+        None, ge=256, le=2048, description="VAD window size (256-2048 samples)"
     )
 
 
@@ -44,22 +35,13 @@ class AudioParameters(BaseModel):
     """Audio processing parameters."""
 
     channels: Optional[int] = Field(
-        None,
-        ge=1,
-        le=2,
-        description="Number of audio channels (1-2)"
+        None, ge=1, le=2, description="Number of audio channels (1-2)"
     )
     sample_rate: Optional[int] = Field(
-        None,
-        ge=8000,
-        le=48000,
-        description="Audio sample rate (8000-48000 Hz)"
+        None, ge=8000, le=48000, description="Audio sample rate (8000-48000 Hz)"
     )
     sample_width: Optional[int] = Field(
-        None,
-        ge=1,
-        le=4,
-        description="Sample width in bytes (1-4)"
+        None, ge=1, le=4, description="Sample width in bytes (1-4)"
     )
 
 
@@ -70,7 +52,7 @@ class TranscriptionParameters(BaseModel):
         None,
         ge=0,
         le=500,
-        description="Maximum context length for Whisper (0-500 chars)"
+        description="Maximum context length for Whisper (0-500 chars)",
     )
 
 
@@ -78,22 +60,13 @@ class CleanupParameters(BaseModel):
     """Resource cleanup parameters."""
 
     session_ttl_minutes: Optional[int] = Field(
-        None,
-        ge=1,
-        le=1440,
-        description="Session TTL in minutes (1-1440)"
+        None, ge=1, le=1440, description="Session TTL in minutes (1-1440)"
     )
     job_retention_minutes: Optional[int] = Field(
-        None,
-        ge=1,
-        le=1440,
-        description="Job retention time in minutes (1-1440)"
+        None, ge=1, le=1440, description="Job retention time in minutes (1-1440)"
     )
     cleanup_interval_seconds: Optional[int] = Field(
-        None,
-        ge=60,
-        le=3600,
-        description="Cleanup interval in seconds (60-3600)"
+        None, ge=60, le=3600, description="Cleanup interval in seconds (60-3600)"
     )
 
 
@@ -101,10 +74,7 @@ class UploadParameters(BaseModel):
     """File upload parameters."""
 
     max_file_size_mb: Optional[int] = Field(
-        None,
-        ge=1,
-        le=500,
-        description="Maximum file size in MB (1-500)"
+        None, ge=1, le=500, description="Maximum file size in MB (1-500)"
     )
 
 
@@ -112,20 +82,13 @@ class RateLimitingParameters(BaseModel):
     """Rate limiting parameters."""
 
     enabled: Optional[bool] = Field(
-        None,
-        description="Whether rate limiting is enabled"
+        None, description="Whether rate limiting is enabled"
     )
     requests_per_minute: Optional[int] = Field(
-        None,
-        ge=1,
-        le=1000,
-        description="Maximum API requests per minute"
+        None, ge=1, le=1000, description="Maximum API requests per minute"
     )
     uploads_per_minute: Optional[int] = Field(
-        None,
-        ge=1,
-        le=100,
-        description="Maximum file uploads per minute"
+        None, ge=1, le=100, description="Maximum file uploads per minute"
     )
 
 
@@ -133,26 +96,18 @@ class PreloadModelsParameters(BaseModel):
     """Model preloading parameters."""
 
     enabled: Optional[bool] = Field(
-        None,
-        description="Whether to preload models on startup"
+        None, description="Whether to preload models on startup"
     )
-    models: Optional[list] = Field(
-        None,
-        description="List of model names to preload"
-    )
+    models: Optional[list] = Field(None, description="List of model names to preload")
 
 
 class AuthParameters(BaseModel):
     """Authentication parameters."""
 
     enabled: Optional[bool] = Field(
-        None,
-        description="Whether authentication is enabled"
+        None, description="Whether authentication is enabled"
     )
-    api_key: Optional[str] = Field(
-        None,
-        description="API key for authentication"
-    )
+    api_key: Optional[str] = Field(None, description="API key for authentication")
 
 
 class SettingsUpdate(BaseModel):

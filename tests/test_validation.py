@@ -15,7 +15,7 @@ class TestSettingsValidation:
             "vad_parameters": {
                 "prob_threshold": 0.5,
                 "silence_duration": 0.7,
-                "min_speech_duration": 0.3
+                "min_speech_duration": 0.3,
             }
         }
         response = await async_client.post("/api/settings", json=valid_settings)
@@ -60,11 +60,7 @@ class TestSettingsValidation:
 
     async def test_partial_update_accepted(self, async_client):
         """Partial updates (only some fields) should be accepted."""
-        partial_settings = {
-            "vad_parameters": {
-                "prob_threshold": 0.6
-            }
-        }
+        partial_settings = {"vad_parameters": {"prob_threshold": 0.6}}
         response = await async_client.post("/api/settings", json=partial_settings)
         assert response.status_code == 200
 
@@ -102,7 +98,7 @@ class TestFileUploadValidationUnit:
         """Filename sanitization should handle special characters."""
         from utils import sanitize_filename
 
-        result = sanitize_filename("file<>:\"|?*.mp3")
+        result = sanitize_filename('file<>:"|?*.mp3')
         # Should replace special chars
         assert "<" not in result
         assert ">" not in result
@@ -162,9 +158,7 @@ class TestPydanticModelsUnit:
         from models import VADParameters
 
         params = VADParameters(
-            prob_threshold=0.5,
-            silence_duration=0.7,
-            min_speech_duration=0.3
+            prob_threshold=0.5, silence_duration=0.7, min_speech_duration=0.3
         )
         assert params.prob_threshold == 0.5
         assert params.silence_duration == 0.7
@@ -240,11 +234,7 @@ class TestPydanticModelsUnit:
         """AudioParameters should accept valid values."""
         from models import AudioParameters
 
-        params = AudioParameters(
-            channels=1,
-            sample_rate=16000,
-            sample_width=2
-        )
+        params = AudioParameters(channels=1, sample_rate=16000, sample_width=2)
         assert params.channels == 1
         assert params.sample_rate == 16000
         assert params.sample_width == 2
@@ -298,7 +288,8 @@ class TestFilePathValidation:
         assert len(result) > 0
 
     def test_sanitize_filename_empty_after_sanitization(self):
-        """sanitize_filename should handle names that become empty after sanitization."""
+        """sanitize_filename should handle names that become empty after
+        sanitization."""
         from utils import sanitize_filename
 
         # Names that might become empty after sanitization
@@ -341,7 +332,7 @@ class TestModelRepoMapping:
         """MODEL_REPO_MAP values should be valid HuggingFace repo IDs."""
         from utils import MODEL_REPO_MAP
 
-        for model, repo_id in MODEL_REPO_MAP.items():
+        for _, repo_id in MODEL_REPO_MAP.items():
             # Repo IDs should have format "org/name"
             assert "/" in repo_id
             parts = repo_id.split("/")
