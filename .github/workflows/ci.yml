@@ -67,6 +67,19 @@ jobs:
     runs-on: ubuntu-latest
     needs: [quality, test]
     steps:
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+
+      - name: Check initial disk space
+        run: df -h
+
       - uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
@@ -80,3 +93,6 @@ jobs:
           tags: echoscribe:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Check final disk space
+        run: df -h
