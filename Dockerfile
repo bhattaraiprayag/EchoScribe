@@ -15,8 +15,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies using uv
-# Mount the cache and bind files to avoid copying headers/project files unnecessarily at this step
+# Create virtual environment explicitly
+RUN uv venv /app/.venv
+
+# Layer 1: Heavy Dependencies (Cached aggressively)
+# This layer only rebuilds if this specific command changes (e.g. upgrading torch version)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /app/.venv "torch==2.9.1+cu129" "torchaudio==2.9.1+cu129" --extra-index-url https://download.pytorch.org/whl/cu129
+
+# Layer 2: The rest of the dependencies
+# This layer rebuilds whenever uv.lock or pyproject.toml changes
+# uv sync will detect that torch/torchaudio are already installed and satisfy requirements
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
