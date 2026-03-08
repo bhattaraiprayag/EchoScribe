@@ -29,14 +29,14 @@ This guide will help you get EchoScribe up and running quickly on your local mac
     uv sync
     ```
 
-3.  **Download VAD Model (Auto-downloading, but you can pre-fetch if desired):**
-    The application will attempt to download `silero_vad.onnx` on first run if missing, but you can verify using:
+3.  **Verify VAD Runtime Dependency (optional, recommended):**
+    EchoScribe uses the pinned `silero-vad` package loader (no `torch.hub` runtime fetch). You can validate it with:
 
     ```powershell
     uv run python backend/get_vad.py
     ```
 
-4.  **Run the Server:**
+4.  **Run the Server from the repository root:**
 
     ```powershell
     uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
@@ -56,16 +56,20 @@ This guide will help you get EchoScribe up and running quickly on your local mac
 2.  **Access the App:**
     Open [http://localhost:8000](http://localhost:8000).
 
-## 🧪 Running Tests
+## 🧪 Running Tests and Checks
 
-To verify your installation:
+To verify your installation and quality gates:
 
 ```powershell
-uv run pytest tests/
+make lint
+make format-check
+make test
+make coverage
+make smoke
 ```
 
 ## 🔧 Troubleshooting
 
 - **Missing FFmpeg:** If you see errors about audio processing, ensure `ffmpeg` is in your system PATH.
 - **Cuda/GPU Issues:** If you have an NVIDIA GPU but it's not being detected, ensure you have the correct NVIDIA drivers installed. The Docker image attempts to use CUDA 12.9 equivalents; local setups will default to your installed drivers or PyTorch's default (CPU) if not configured.
-- **VAD Model Error:** If the VAD model fails to load, ensure `silero_vad.onnx` is present in the root directory (where the backend runs).
+- **VAD Model Error:** Re-run `uv run python backend/get_vad.py` to verify the installed `silero-vad` package can load the model artifact.

@@ -250,8 +250,8 @@
                 class="w-full mt-1 border-gray-300 rounded-md px-3 py-2 border"
               />
               <p class="text-xs text-gray-500 mt-1">
-                Stored locally in your browser. Leave empty if authentication is
-                disabled on the server.
+                Stored only for this browser tab session. Leave empty if
+                authentication is disabled on the server.
               </p>
             </div>
           </fieldset>
@@ -392,14 +392,26 @@
         const apiKeyInput = document.getElementById("api_key_input");
 
         // API Key management
+        const API_KEY_SESSION_STORAGE_KEY = "echoscribe_api_key_session";
+        const API_KEY_LEGACY_STORAGE_KEY = "echoscribe_api_key";
         const getApiKey = () =>
-          localStorage.getItem("echoscribe_api_key") || "";
+          sessionStorage.getItem(API_KEY_SESSION_STORAGE_KEY) || "";
         const setApiKey = (key) => {
           if (key) {
-            localStorage.setItem("echoscribe_api_key", key);
+            sessionStorage.setItem(API_KEY_SESSION_STORAGE_KEY, key);
           } else {
-            localStorage.removeItem("echoscribe_api_key");
+            sessionStorage.removeItem(API_KEY_SESSION_STORAGE_KEY);
           }
+        };
+        const migrateLegacyApiKey = () => {
+          const sessionKey = getApiKey();
+          if (sessionKey) return;
+          const legacyKey =
+            localStorage.getItem(API_KEY_LEGACY_STORAGE_KEY) || "";
+          if (!legacyKey) return;
+          setApiKey(legacyKey);
+          localStorage.removeItem(API_KEY_LEGACY_STORAGE_KEY);
+          showToast("Migrated API key to session-only storage.");
         };
 
         // Helper function to add auth headers to fetch requests
@@ -414,6 +426,7 @@
 
         const initialize = async () => {
           try {
+            migrateLegacyApiKey();
             const response = await fetch("/api/config");
             if (!response.ok)
               throw new Error(`Failed to fetch config: ${response.statusText}`);
@@ -487,7 +500,7 @@
           );
 
           reconnectTimeout = setTimeout(() => {
-            connectWebSocket(true); // Pass true to indicate reconnection
+            void connectWebSocket(true); // Pass true to indicate reconnection
           }, delay);
         };
 
@@ -499,22 +512,38 @@
           reconnectAttempts = 0;
         };
 
-        const connectWebSocket = (isReconnect = false) => {
+        const requestWebSocketToken = async () => {
+          if (!getApiKey()) return null;
+          const response = await fetchWithAuth("/api/ws-auth-token", {
+            method: "POST",
+          });
+          if (!response.ok) {
+            throw new Error("Failed to acquire WebSocket auth token");
+          }
+          const data = await response.json();
+          return data.token;
+        };
+
+        const connectWebSocket = async (isReconnect = false) => {
           if (!isReconnect) {
             sessionId = generateUUID();
             reconnectAttempts = 0;
             isIntentionalDisconnect = false;
           }
 
+          let authToken = null;
+          try {
+            authToken = await requestWebSocketToken();
+          } catch (error) {
+            console.error("WebSocket token request failed:", error);
+            updateUI("error", "Authentication failed. Check your API key.");
+            return false;
+          }
+
           // Dynamically determine WebSocket protocol based on page protocol
           const wsProtocol =
             window.location.protocol === "https:" ? "wss:" : "ws:";
-          const apiKey = getApiKey();
-          const wsUrl = apiKey
-            ? `${wsProtocol}//${
-                window.location.host
-              }/ws/${sessionId}?api_key=${encodeURIComponent(apiKey)}`
-            : `${wsProtocol}//${window.location.host}/ws/${sessionId}`;
+          const wsUrl = `${wsProtocol}//${window.location.host}/ws/${sessionId}`;
           websocket = new WebSocket(wsUrl);
 
           websocket.onopen = () => {
@@ -527,6 +556,9 @@
               device: deviceSelect.value,
               language: languageSelect.value,
             };
+            if (authToken) {
+              config.auth_token = authToken;
+            }
             websocket.send(JSON.stringify(config));
           };
 
@@ -649,6 +681,8 @@
             console.error("WebSocket error:", error);
             // Don't update UI here - let onclose handle it
           };
+
+          return true;
         };
 
         const startAudioProcessing = async () => {
@@ -754,7 +788,8 @@
 
         const startRecording = async () => {
           updateUI("connecting");
-          connectWebSocket();
+          const hasSocket = await connectWebSocket();
+          if (!hasSocket) return;
           await startAudioProcessing();
         };
 
@@ -901,7 +936,7 @@
             minSpeechDurationInput.value =
               settings.vad_parameters.min_speech_duration;
 
-            // Load API key from localStorage
+            // Load API key from session storage
             apiKeyInput.value = getApiKey();
           } catch (error) {
             console.error("Failed to load settings:", error);
@@ -1017,12 +1052,8 @@
                     <div class="flex justify-between items-start mb-2">
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2">
-                                <p class="text-sm font-medium truncate" title="${fileName}">${fileName}</p>
-                                ${
-                                  durationStr
-                                    ? `<span class="text-xs text-gray-400 whitespace-nowrap">(${durationStr})</span>`
-                                    : ""
-                                }
+                                <p class="file-name text-sm font-medium truncate"></p>
+                                <span class="file-duration text-xs text-gray-400 whitespace-nowrap hidden"></span>
                             </div>
                             <p class="text-xs text-gray-500">Status: <span class="status">In queue...</span></p>
                         </div>
@@ -1043,6 +1074,16 @@
                         </div>
                     </div>
                 `;
+
+          const fileNameElement = jobElement.querySelector(".file-name");
+          fileNameElement.textContent = fileName;
+          fileNameElement.title = fileName;
+
+          const durationElement = jobElement.querySelector(".file-duration");
+          if (durationStr) {
+            durationElement.textContent = `(${durationStr})`;
+            durationElement.classList.remove("hidden");
+          }
 
           // Add remove button handler (for items still in queue)
           const removeBtn = jobElement.querySelector(".remove-btn");

@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from config_manager import get_config
+from backend.config_manager import get_config
 
 logger = logging.getLogger(__name__)
 

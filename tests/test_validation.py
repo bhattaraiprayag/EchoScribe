@@ -75,28 +75,28 @@ class TestFileUploadValidationUnit:
 
     def test_sanitize_filename_removes_path_separators(self):
         """Filename sanitization should remove path separators."""
-        from utils import sanitize_filename
+        from backend.utils import sanitize_filename
 
         assert "/" not in sanitize_filename("../../../etc/passwd")
         assert "\\" not in sanitize_filename("..\\..\\etc\\passwd")
 
     def test_sanitize_filename_removes_double_dots(self):
         """Filename sanitization should remove double dots."""
-        from utils import sanitize_filename
+        from backend.utils import sanitize_filename
 
         result = sanitize_filename("../../../test.mp3")
         assert ".." not in result
 
     def test_sanitize_filename_keeps_valid_chars(self):
         """Filename sanitization should keep valid characters."""
-        from utils import sanitize_filename
+        from backend.utils import sanitize_filename
 
         result = sanitize_filename("my_audio-file.mp3")
         assert "my_audio-file.mp3" == result
 
     def test_sanitize_filename_handles_special_chars(self):
         """Filename sanitization should handle special characters."""
-        from utils import sanitize_filename
+        from backend.utils import sanitize_filename
 
         result = sanitize_filename('file<>:"|?*.mp3')
         # Should replace special chars
@@ -110,7 +110,7 @@ class TestFileUploadValidationUnit:
 
     def test_is_valid_audio_extension_accepts_valid(self):
         """is_valid_audio_extension should accept valid audio extensions."""
-        from utils import is_valid_audio_extension
+        from backend.utils import is_valid_audio_extension
 
         assert is_valid_audio_extension(".mp3")
         assert is_valid_audio_extension(".wav")
@@ -122,7 +122,7 @@ class TestFileUploadValidationUnit:
 
     def test_is_valid_audio_extension_rejects_invalid(self):
         """is_valid_audio_extension should reject invalid extensions."""
-        from utils import is_valid_audio_extension
+        from backend.utils import is_valid_audio_extension
 
         assert not is_valid_audio_extension(".exe")
         assert not is_valid_audio_extension(".txt")
@@ -132,7 +132,7 @@ class TestFileUploadValidationUnit:
 
     def test_is_valid_audio_extension_accepts_video_formats(self):
         """is_valid_audio_extension should accept common video formats with audio."""
-        from utils import is_valid_audio_extension
+        from backend.utils import is_valid_audio_extension
 
         # Video formats that contain audio tracks
         assert is_valid_audio_extension(".mkv")
@@ -142,12 +142,21 @@ class TestFileUploadValidationUnit:
         assert is_valid_audio_extension(".MKV")  # Case insensitive
         assert is_valid_audio_extension(".MP4")
 
-    def test_max_file_size_constant_exists(self):
-        """MAX_FILE_SIZE constant should be defined."""
-        from utils import MAX_FILE_SIZE
+    def test_get_max_file_size_bytes_uses_default(self):
+        """get_max_file_size_bytes should provide sane default limit."""
+        from backend.utils import get_max_file_size_bytes
 
-        # MAX_FILE_SIZE is 0 to indicate no limit
-        assert MAX_FILE_SIZE == 0  # No file size limit
+        size_bytes = get_max_file_size_bytes({"upload_parameters": {}})
+        assert size_bytes == 100 * 1024 * 1024
+
+    def test_get_max_file_size_bytes_uses_configured_value(self):
+        """get_max_file_size_bytes should respect configured max_file_size_mb."""
+        from backend.utils import get_max_file_size_bytes
+
+        size_bytes = get_max_file_size_bytes(
+            {"upload_parameters": {"max_file_size_mb": 25}}
+        )
+        assert size_bytes == 25 * 1024 * 1024
 
 
 class TestPydanticModelsUnit:
@@ -155,7 +164,7 @@ class TestPydanticModelsUnit:
 
     def test_vad_parameters_valid(self):
         """VADParameters should accept valid values."""
-        from models import VADParameters
+        from backend.models import VADParameters
 
         params = VADParameters(
             prob_threshold=0.5, silence_duration=0.7, min_speech_duration=0.3
@@ -166,8 +175,9 @@ class TestPydanticModelsUnit:
 
     def test_vad_parameters_prob_threshold_bounds(self):
         """VADParameters should validate prob_threshold bounds."""
-        from models import VADParameters
         from pydantic import ValidationError
+
+        from backend.models import VADParameters
 
         # Valid boundary values
         VADParameters(prob_threshold=0.1)
@@ -181,8 +191,9 @@ class TestPydanticModelsUnit:
 
     def test_vad_parameters_silence_duration_bounds(self):
         """VADParameters should validate silence_duration bounds."""
-        from models import VADParameters
         from pydantic import ValidationError
+
+        from backend.models import VADParameters
 
         # Valid boundary values
         VADParameters(silence_duration=0.1)
@@ -196,8 +207,9 @@ class TestPydanticModelsUnit:
 
     def test_vad_parameters_min_speech_duration_bounds(self):
         """VADParameters should validate min_speech_duration bounds."""
-        from models import VADParameters
         from pydantic import ValidationError
+
+        from backend.models import VADParameters
 
         # Valid boundary values
         VADParameters(min_speech_duration=0.1)
@@ -211,8 +223,9 @@ class TestPydanticModelsUnit:
 
     def test_settings_update_rejects_unknown_keys(self):
         """SettingsUpdate should reject unknown configuration keys."""
-        from models import SettingsUpdate
         from pydantic import ValidationError
+
+        from backend.models import SettingsUpdate
 
         # Valid
         SettingsUpdate(vad_parameters={"prob_threshold": 0.5})
@@ -223,7 +236,7 @@ class TestPydanticModelsUnit:
 
     def test_settings_update_allows_partial(self):
         """SettingsUpdate should allow partial updates."""
-        from models import SettingsUpdate
+        from backend.models import SettingsUpdate
 
         # Only vad_parameters
         settings = SettingsUpdate(vad_parameters={"prob_threshold": 0.5})
@@ -232,7 +245,7 @@ class TestPydanticModelsUnit:
 
     def test_audio_parameters_valid(self):
         """AudioParameters should accept valid values."""
-        from models import AudioParameters
+        from backend.models import AudioParameters
 
         params = AudioParameters(channels=1, sample_rate=16000, sample_width=2)
         assert params.channels == 1
@@ -241,15 +254,16 @@ class TestPydanticModelsUnit:
 
     def test_transcription_parameters_valid(self):
         """TranscriptionParameters should accept valid values."""
-        from models import TranscriptionParameters
+        from backend.models import TranscriptionParameters
 
         params = TranscriptionParameters(context_max_length=224)
         assert params.context_max_length == 224
 
     def test_transcription_parameters_bounds(self):
         """TranscriptionParameters should validate bounds."""
-        from models import TranscriptionParameters
         from pydantic import ValidationError
+
+        from backend.models import TranscriptionParameters
 
         # Valid boundary
         TranscriptionParameters(context_max_length=0)
@@ -267,7 +281,7 @@ class TestFilePathValidation:
 
     def test_sanitize_filename_long_names(self):
         """sanitize_filename should handle very long file names."""
-        from utils import sanitize_filename
+        from backend.utils import sanitize_filename
 
         long_name = "a" * 500 + ".mp3"
         result = sanitize_filename(long_name)
@@ -279,7 +293,7 @@ class TestFilePathValidation:
 
     def test_sanitize_filename_unicode(self):
         """sanitize_filename should handle unicode characters."""
-        from utils import sanitize_filename
+        from backend.utils import sanitize_filename
 
         unicode_name = "音声ファイル_録音.mp3"
         result = sanitize_filename(unicode_name)
@@ -290,7 +304,7 @@ class TestFilePathValidation:
     def test_sanitize_filename_empty_after_sanitization(self):
         """sanitize_filename should handle names that become empty after
         sanitization."""
-        from utils import sanitize_filename
+        from backend.utils import sanitize_filename
 
         # Names that might become empty after sanitization
         problematic_names = ["...", "///", "\\\\", ""]
@@ -301,7 +315,7 @@ class TestFilePathValidation:
 
     def test_is_valid_audio_extension_case_insensitive(self):
         """is_valid_audio_extension should be case insensitive."""
-        from utils import is_valid_audio_extension
+        from backend.utils import is_valid_audio_extension
 
         extensions = [".MP3", ".Wav", ".FLAC", ".OGG"]
         for ext in extensions:
@@ -314,7 +328,7 @@ class TestModelRepoMapping:
 
     def test_model_repo_map_contains_standard_models(self):
         """MODEL_REPO_MAP should contain all standard model sizes."""
-        from utils import MODEL_REPO_MAP
+        from backend.utils import MODEL_REPO_MAP
 
         standard_models = ["tiny", "base", "small", "medium", "large-v3"]
         for model in standard_models:
@@ -323,14 +337,14 @@ class TestModelRepoMapping:
 
     def test_model_repo_map_contains_distil_models(self):
         """MODEL_REPO_MAP should contain distilled model variants."""
-        from utils import MODEL_REPO_MAP
+        from backend.utils import MODEL_REPO_MAP
 
         assert "distil-large-v3" in MODEL_REPO_MAP
         assert "distil" in MODEL_REPO_MAP["distil-large-v3"].lower()
 
     def test_model_repo_map_values_are_valid_repo_ids(self):
         """MODEL_REPO_MAP values should be valid HuggingFace repo IDs."""
-        from utils import MODEL_REPO_MAP
+        from backend.utils import MODEL_REPO_MAP
 
         for _, repo_id in MODEL_REPO_MAP.items():
             # Repo IDs should have format "org/name"

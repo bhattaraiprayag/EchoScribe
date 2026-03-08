@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 _config_data: Dict[str, Any] = {}
 
 
+class ConfigPersistenceError(RuntimeError):
+    """Raised when writing configuration to disk fails."""
+
+
 def load_config() -> Dict[str, Any]:
     """Load YAML configuration from file.
 
@@ -65,15 +69,19 @@ def save_config(config: Dict[str, Any]) -> None:
 
     Args:
         config: Configuration dictionary to save.
+
+    Raises:
+        ConfigPersistenceError: If configuration cannot be written.
     """
     global _config_data
     try:
-        with open(CONFIG_PATH, "w") as f:
-            yaml.dump(config, f, default_flow_style=False)
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            yaml.safe_dump(config, f, default_flow_style=False)
         _config_data = copy.deepcopy(config)
         logger.info("Configuration saved successfully.")
-    except Exception as e:
+    except (OSError, yaml.YAMLError) as e:
         logger.error(f"Error saving configuration: {e}")
+        raise ConfigPersistenceError("Failed to persist configuration") from e
 
 
 _config_data = load_config()

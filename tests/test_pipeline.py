@@ -646,9 +646,8 @@ class TestBatchShortUtterances:
 
         config = get_config()
         vad_params = config.get("vad_parameters", {})
-        # Should have batch settings
-        assert "batch_short_utterances" in vad_params or True  # Optional
-        assert "batch_min_duration" in vad_params or True  # Optional
+        assert "batch_short_utterances" in vad_params
+        assert "batch_min_duration" in vad_params
 
     def test_calculate_audio_duration(self):
         """Test audio duration calculation utility."""

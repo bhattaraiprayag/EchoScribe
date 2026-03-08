@@ -11,10 +11,11 @@ from typing import Any, Dict, Optional
 import ffmpeg
 import numpy as np
 import torch
-from config_manager import config_data
 from fastapi import WebSocketDisconnect
 from faster_whisper import WhisperModel
-from utils import VAD_CACHE_DIR
+from silero_vad import load_silero_vad
+
+from backend.config_manager import config_data
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -103,31 +104,19 @@ class TranscriptionSession:
                 self.transcription_context = trimmed
 
     def load_vad_model(self):
-        """Load Silero VAD model from cache.
+        """Load Silero VAD model from installed package.
 
         Returns:
-            Tuple of model and utils.
+            Tuple of model and optional utils placeholder.
 
         Raises:
             Exception: If model loading fails.
         """
         try:
-            # Set torch hub directory to use our cache
-            original_hub_dir = torch.hub.get_dir()
-            torch.hub.set_dir(VAD_CACHE_DIR)
-
-            logger.info(f"Loading Silero VAD model from cache dir: {VAD_CACHE_DIR}")
-            model, utils = torch.hub.load(
-                repo_or_dir="snakers4/silero-vad",
-                model="silero_vad",
-                force_reload=False,
-                onnx=True,
-            )
-
-            # Restore original hub directory
-            torch.hub.set_dir(original_hub_dir)
+            logger.info("Loading Silero VAD model from installed silero-vad package")
+            model = load_silero_vad(onnx=True)
             logger.info("Silero VAD model loaded successfully")
-            return model, utils
+            return model, None
         except Exception as e:
             logger.error(f"Failed to load Silero VAD model: {e}")
             raise

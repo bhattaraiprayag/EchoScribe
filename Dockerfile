@@ -18,18 +18,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create virtual environment explicitly
 RUN uv venv /app/.venv
 
-# Layer 1: Heavy Dependencies (Cached aggressively)
-# This layer only rebuilds if this specific command changes (e.g. upgrading torch version)
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --python /app/.venv "torch==2.9.1+cu129" "torchaudio==2.9.1+cu129" --extra-index-url https://download.pytorch.org/whl/cu129
+# Copy dependency metadata for reproducible cacheable installs
+COPY pyproject.toml uv.lock /app/
 
-# Layer 2: The rest of the dependencies
-# This layer rebuilds whenever uv.lock or pyproject.toml changes
-# uv sync will detect that torch/torchaudio are already installed and satisfy requirements
+# Install dependencies from standards-compliant metadata for portability.
+# `--no-sources` avoids requiring custom source indexes during container builds.
+# This layer rebuilds whenever uv.lock or pyproject.toml changes.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --frozen --no-install-project --no-editable
+    uv sync --no-sources --no-install-project --no-editable
 
 # Stage 2: Runtime
 FROM python:3.11-slim

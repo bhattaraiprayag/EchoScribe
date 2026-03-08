@@ -22,9 +22,17 @@ preload_models:
   device: cpu
   enabled: false
   models: []
+rate_limiting:
+  enabled: true
+  requests_per_minute: 100
+  trusted_proxies: []
+  uploads_per_minute: 10
+  websocket_connections_per_ip: 5
 transcription_parameters:
   context_max_length: 224
   word_timestamps: false
+upload_parameters:
+  max_file_size_mb: 100
 vad_parameters:
   batch_min_duration: 1.0
   batch_short_utterances: true

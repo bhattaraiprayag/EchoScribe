@@ -1,27 +1,18 @@
-"""Silero VAD model downloader utility for EchoScribe."""
+"""Silero VAD model verification utility for EchoScribe."""
 
-import torch
-from utils import VAD_CACHE_DIR
+from silero_vad import load_silero_vad
 
 
-def download_silero_vad() -> None:
-    """Download Silero VAD model to the models_cache directory."""
-    print(f"Downloading Silero VAD model to: {VAD_CACHE_DIR}")
+def verify_silero_vad() -> None:
+    """Verify pinned silero-vad package can load the model artifact."""
+    print("Loading Silero VAD model from installed package...")
     try:
-        # Set torch hub directory to use our cache location
-        torch.hub.set_dir(VAD_CACHE_DIR)
-        torch.hub.load(
-            repo_or_dir="snakers4/silero-vad",
-            model="silero_vad",
-            force_reload=True,
-            onnx=True,
-            trust_repo=True,
-        )
-        print(f"Model downloaded successfully to '{VAD_CACHE_DIR}'.")
+        load_silero_vad(onnx=True)
+        print("Silero VAD model loaded successfully.")
     except Exception as e:
-        print(f"Error downloading model: {e}")
-        print("Please check your internet connection and PyTorch installation.")
+        print(f"Error loading Silero VAD model: {e}")
+        print("Please check your silero-vad installation.")
 
 
 if __name__ == "__main__":
-    download_silero_vad()
+    verify_silero_vad()

@@ -90,6 +90,15 @@ class RateLimitingParameters(BaseModel):
     uploads_per_minute: Optional[int] = Field(
         None, ge=1, le=100, description="Maximum file uploads per minute"
     )
+    websocket_connections_per_ip: Optional[int] = Field(
+        None,
+        ge=1,
+        le=100,
+        description="Maximum concurrent WebSocket connections per IP",
+    )
+    trusted_proxies: Optional[list[str]] = Field(
+        None, description="Trusted proxy IPs or CIDRs allowed to set X-Forwarded-For"
+    )
 
 
 class PreloadModelsParameters(BaseModel):

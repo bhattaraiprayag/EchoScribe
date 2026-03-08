@@ -9,14 +9,14 @@ class TestConfigManager:
 
     def test_load_config_returns_dict(self):
         """load_config should return a dictionary."""
-        from config_manager import load_config
+        from backend.config_manager import load_config
 
         config = load_config()
         assert isinstance(config, dict)
 
     def test_get_config_returns_copy(self):
         """get_config should return a deep copy, not the original."""
-        from config_manager import get_config
+        from backend.config_manager import get_config
 
         config1 = get_config()
         config2 = get_config()
@@ -31,7 +31,7 @@ class TestConfigManager:
 
     def test_get_config_nested_is_copy(self):
         """Nested dicts from get_config should also be copies."""
-        from config_manager import get_config
+        from backend.config_manager import get_config
 
         config1 = get_config()
         config2 = get_config()
@@ -42,7 +42,7 @@ class TestConfigManager:
 
     def test_reload_config_updates_internal_data(self):
         """reload_config should update the internal config data."""
-        from config_manager import get_config, reload_config, save_config
+        from backend.config_manager import get_config, reload_config, save_config
 
         # Get original config
         original = get_config()
@@ -65,7 +65,7 @@ class TestConfigManager:
 
     def test_save_config_updates_in_memory(self):
         """save_config should also update in-memory config."""
-        from config_manager import get_config, save_config
+        from backend.config_manager import get_config, save_config
 
         original = get_config()
 
@@ -84,7 +84,7 @@ class TestConfigManager:
 
     def test_config_data_backwards_compatibility(self):
         """config_data should still work for backwards compatibility."""
-        from config_manager import config_data
+        from backend.config_manager import config_data
 
         # Should be a dict
         assert isinstance(config_data, dict)
@@ -98,7 +98,7 @@ class TestConfigManagerEdgeCases:
 
     def test_get_config_with_empty_file(self):
         """get_config should handle empty config gracefully."""
-        from config_manager import get_config
+        from backend.config_manager import get_config
 
         # Even if config is minimal, should return dict
         config = get_config()
@@ -106,7 +106,7 @@ class TestConfigManagerEdgeCases:
 
     def test_reload_config_returns_dict(self):
         """reload_config should return the reloaded config."""
-        from config_manager import reload_config
+        from backend.config_manager import reload_config
 
         result = reload_config()
         assert isinstance(result, dict)

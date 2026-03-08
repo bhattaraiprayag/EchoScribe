@@ -2,11 +2,14 @@
 
 import logging
 import os
+import secrets
+import time
 from typing import Any, Dict, Optional
 
-from config_manager import get_config
 from fastapi import HTTPException, Security
 from fastapi.security.api_key import APIKeyHeader
+
+from backend.config_manager import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +17,8 @@ API_KEY_HEADER = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_HEADER, auto_error=False)
 
 _auth_config_override: Optional[Dict[str, Any]] = None
+_ws_auth_tokens: Dict[str, float] = {}
+WS_AUTH_TOKEN_TTL_SECONDS = 120
 
 
 def get_auth_config() -> Dict[str, Any]:
@@ -107,3 +112,48 @@ async def api_key_auth(
         detail="Invalid or missing API key",
         headers={"WWW-Authenticate": "ApiKey"},
     )
+
+
+def _prune_expired_ws_tokens(now: Optional[float] = None) -> None:
+    """Remove expired WebSocket auth tokens."""
+    current_time = now if now is not None else time.time()
+    expired_tokens = [
+        token
+        for token, expires_at in _ws_auth_tokens.items()
+        if expires_at <= current_time
+    ]
+    for token in expired_tokens:
+        _ws_auth_tokens.pop(token, None)
+
+
+def issue_ws_auth_token(api_key: Optional[str]) -> str:
+    """Issue short-lived one-time token for WebSocket authentication."""
+    if not verify_api_key(api_key):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API key",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    _prune_expired_ws_tokens(now)
+    _ws_auth_tokens[token] = now + WS_AUTH_TOKEN_TTL_SECONDS
+    return token
+
+
+def consume_ws_auth_token(token: Optional[str]) -> bool:
+    """Validate and consume a one-time WebSocket authentication token."""
+    if not get_auth_config().get("enabled", False):
+        return True
+    if not token:
+        return False
+
+    now = time.time()
+    _prune_expired_ws_tokens(now)
+    expires_at = _ws_auth_tokens.pop(token, None)
+    return expires_at is not None and expires_at > now
+
+
+def reset_ws_auth_tokens() -> None:
+    """Clear in-memory WebSocket authentication tokens (test helper)."""
+    _ws_auth_tokens.clear()

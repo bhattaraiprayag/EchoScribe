@@ -28,13 +28,15 @@ Here’s a quick look at how to use EchoScribe's real-time and batch transcripti
   - Customize session TTL and cleanup intervals
 - **🔒 Security Features:**
   - Optional API key authentication with environment variable support
-  - Request rate limiting per IP address
+  - Configurable rate limiting for API, uploads, and WebSocket connections
+  - Trusted-proxy aware client IP resolution
+  - Redacted settings responses and one-time WebSocket auth tokens
   - File validation and path traversal protection
   - Secure constant-time string comparison for authentication
 - **💾 Download Recordings:** After a real-time session, download your recording as an MP3 file
 - **📝 Export Transcripts:** Easily copy the transcript or download it as a `.txt` file
 - **🌐 Modern UI:** Clean and intuitive interface built with Tailwind CSS
-- **🧪 Well-Tested:** Comprehensive test suite with 105+ tests covering all major functionality
+- **🧪 Well-Tested:** Comprehensive test suite with 170+ tests covering core runtime and security paths
 
 ## ⚡ How It Works
 
@@ -111,13 +113,14 @@ The application exposes several RESTful and WebSocket endpoints to power the fro
 | :--- | :--- | :--- |
 | `GET` | `/` | Serves the main HTML frontend. |
 | `GET` | `/api/config` | Provides available models, compute devices, and languages to the client. |
-| `GET` | `/api/settings` | Retrieves the current VAD and application settings from `config.yaml`. |
+| `GET` | `/api/settings` | Retrieves settings from `config.yaml` (API key redacted; authenticated when auth is enabled). |
 | `POST` | `/api/settings` | Updates and saves new settings to `config.yaml`. |
+| `POST` | `/api/ws-auth-token` | Issues a short-lived WebSocket auth token (requires `X-API-Key` when auth is enabled). |
 | `POST` | `/api/transcribe` | Uploads an audio file for batch transcription. Returns a `job_id`. |
 | `GET` | `/api/transcribe/status/{job_id}` | Polls the status and result of a batch transcription job. |
 | `DELETE` | `/api/transcribe/{job_id}` | Cancels a pending or running batch transcription job. |
 | `GET` | `/api/model/status` | Returns cache and download status for a specific model. |
-| `WEBSOCKET` | `/ws/{session_id}` | Establishes the real-time transcription WebSocket connection. |
+| `WEBSOCKET` | `/ws/{session_id}` | Real-time connection; first config message must include `auth_token` from `/api/ws-auth-token`. |
 | `GET` | `/download/{session_id}` | Downloads the complete audio recording of a real-time session as an MP3. |
 
 ## 🏁 Getting Started
@@ -154,7 +157,7 @@ Mac users should select the `cpu` device. The application will default to CPU on
    ```
 
 3. **Download the VAD model**:
-   The Silero VAD model is required for real-time transcription.
+   The Silero VAD model is loaded through the pinned `silero-vad` package (no runtime `torch.hub` master-zip fetch).
    ```sh
    uv run python backend/get_vad.py
    ```
@@ -272,13 +275,18 @@ The Docker setup uses volumes for persistent storage:
 
 ### 🧪 Running Tests
 
-To ensure everything is working correctly, you can run the comprehensive test suite with 105+ tests:
+To ensure everything is working correctly, run the test and quality checks from the repository root:
 
 ```sh
-# From the root directory
-uv run pytest tests/ -v                    # Run all tests with verbose output
-uv run pytest tests/test_pipeline.py      # Run specific test file
-uv run pytest -k "test_auth"               # Run tests matching pattern
+make sync                                 # Install dependencies
+make lint                                 # Ruff lint checks
+make format-check                         # Formatting gate
+make pre-commit                           # Run all hooks
+make test                                 # Full pytest suite
+make coverage                             # Coverage report + fail-under gate
+make smoke                                # Startup smoke test (backend.main:app)
+make docker-build                         # Docker image build verification
+make clean                                # Safely remove pycache/test/build artifacts
 ```
 
 **Test Coverage:**
@@ -301,7 +309,7 @@ You can adjust the default application behavior by editing the [backend/config.y
 
 **VAD Parameters:**
 
-- `prob_threshold` (0.1-0.9): Speech probability threshold (higher values are stricter, default: 0.8)
+- `prob_threshold` (0.1-0.9): Speech probability threshold (higher values are stricter, default: 0.6)
 - `silence_duration` (0.1-5.0s): Seconds of silence to trigger end of utterance (default: 0.7)
 - `min_speech_duration` (0.1-2.0s): Minimum speech segment length for transcription (default: 0.3)
 
@@ -331,13 +339,22 @@ You can adjust the default application behavior by editing the [backend/config.y
 - `enabled` (true/false): Enable rate limiting (default: true)
 - `requests_per_minute`: API requests per IP per minute (default: 100)
 - `uploads_per_minute`: File uploads per IP per minute (default: 10)
+- `websocket_connections_per_ip`: Concurrent WebSocket sessions per client IP (default: 5)
+- `trusted_proxies`: CIDRs/IPs allowed to supply `X-Forwarded-For` (default: `[]`)
+
+**Upload Parameters:**
+
+- `max_file_size_mb`: Maximum accepted upload size in megabytes (default: 100)
 
 ## 🔒 Security
 
 EchoScribe includes several security features:
 
 - **API Key Authentication**: Optional authentication via `X-API-Key` header with environment variable support
-- **Rate Limiting**: Configurable per-IP rate limiting for API endpoints and file uploads
+- **Rate Limiting**: Configurable per-IP limits for API endpoints, uploads, and WebSockets
+- **Trusted Proxy Enforcement**: `X-Forwarded-For` is honored only for configured proxy CIDRs
+- **Secrets Hygiene**: `/api/settings` redacts `auth.api_key` in responses
+- **WebSocket Hardening**: One-time, short-lived auth tokens replace query-string API keys
 - **Input Validation**: Comprehensive validation for file uploads and settings updates
 - **Path Traversal Protection**: Filename sanitization to prevent directory traversal attacks
 - **Secure Comparisons**: Constant-time string comparison for API keys to prevent timing attacks
@@ -351,7 +368,7 @@ To enable authentication, set `auth.enabled: true` in `config.yaml` and provide 
 - PEP8 compliant codebase
 - Type annotations throughout
 - Comprehensive docstrings
-- 105+ automated tests
+- 170+ automated tests
 - Double-check locking for model caching
 - Async/await for non-blocking I/O
 

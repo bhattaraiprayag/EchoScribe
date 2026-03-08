@@ -1,5 +1,6 @@
 # tests/test_api.py
 
+import io
 from pathlib import Path
 
 import pytest
@@ -50,6 +51,95 @@ async def test_settings_flow(async_client):
     reset_settings = {"vad_parameters": {"prob_threshold": original_threshold}}
     post_response_reset = await async_client.post("/api/settings", json=reset_settings)
     assert post_response_reset.status_code == 200
+
+
+async def test_get_settings_requires_auth_when_enabled(async_client, monkeypatch):
+    """GET /api/settings should require API key when auth is enabled."""
+    monkeypatch.setattr(
+        "backend.auth._auth_config_override", {"enabled": True, "api_key": "secret-key"}
+    )
+    try:
+        response = await async_client.get("/api/settings")
+        assert response.status_code == 401
+        assert "Invalid or missing API key" in response.json()["detail"]
+    finally:
+        monkeypatch.setattr("backend.auth._auth_config_override", None)
+
+
+async def test_get_settings_redacts_api_key(async_client, monkeypatch):
+    """GET /api/settings should never return raw API key values."""
+    monkeypatch.setattr(
+        "backend.auth._auth_config_override", {"enabled": True, "api_key": "secret-key"}
+    )
+    monkeypatch.setattr(
+        "backend.main.get_config",
+        lambda: {
+            "auth": {"enabled": True, "api_key": "secret-key"},
+            "vad_parameters": {"prob_threshold": 0.6},
+        },
+    )
+    try:
+        response = await async_client.get(
+            "/api/settings", headers={"X-API-Key": "secret-key"}
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["auth"]["enabled"] is True
+        assert payload["auth"]["api_key"] == "***REDACTED***"
+    finally:
+        monkeypatch.setattr("backend.auth._auth_config_override", None)
+
+
+async def test_set_settings_returns_error_when_persistence_fails(
+    async_client, monkeypatch
+):
+    """POST /api/settings should propagate persistence failures."""
+    from backend.config_manager import ConfigPersistenceError
+
+    monkeypatch.setattr(
+        "backend.main.save_config",
+        lambda config: (_ for _ in ()).throw(ConfigPersistenceError("disk failure")),
+    )
+    response = await async_client.post(
+        "/api/settings", json={"vad_parameters": {"prob_threshold": 0.6}}
+    )
+    assert response.status_code == 500
+    payload = response.json()
+    assert payload["error"]["code"] == "CONFIG_PERSISTENCE_ERROR"
+    assert payload["error"]["message"] == "Failed to persist settings update"
+    assert isinstance(payload["error"]["correlation_id"], str)
+    assert "disk failure" not in str(payload)
+
+
+async def test_ws_auth_token_requires_api_key_when_auth_enabled(
+    async_client, monkeypatch
+):
+    """WS auth token endpoint should enforce API key when auth is enabled."""
+    monkeypatch.setattr(
+        "backend.auth._auth_config_override", {"enabled": True, "api_key": "secret-key"}
+    )
+    try:
+        response = await async_client.post("/api/ws-auth-token")
+        assert response.status_code == 401
+    finally:
+        monkeypatch.setattr("backend.auth._auth_config_override", None)
+
+
+async def test_ws_auth_token_issued_with_valid_api_key(async_client, monkeypatch):
+    """WS auth token endpoint should return short-lived token for valid key."""
+    monkeypatch.setattr(
+        "backend.auth._auth_config_override", {"enabled": True, "api_key": "secret-key"}
+    )
+    try:
+        response = await async_client.post(
+            "/api/ws-auth-token", headers={"X-API-Key": "secret-key"}
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert isinstance(payload.get("token"), str)
+        assert payload.get("expires_in_seconds", 0) > 0
+    finally:
+        monkeypatch.setattr("backend.auth._auth_config_override", None)
 
 
 async def test_websocket_connection(sync_test_client):
@@ -119,6 +209,25 @@ async def test_model_status_includes_repo_id(async_client):
     assert "Systran" in data["repo_id"]
 
 
+async def test_config_exposes_upload_limits(async_client):
+    """Tests /api/config includes effective upload size limits."""
+    response = await async_client.get("/api/config")
+    assert response.status_code == 200
+    config = response.json()
+    assert "upload_parameters" in config
+    assert config["upload_parameters"]["max_file_size_mb"] > 0
+
+
+async def test_oversized_upload_returns_413(async_client, monkeypatch):
+    """Uploads larger than effective limit should return HTTP 413."""
+    monkeypatch.setattr("backend.main.get_max_file_size_bytes", lambda config=None: 64)
+    files = {"file": ("oversized.mp3", io.BytesIO(b"x" * 128), "audio/mpeg")}
+    data = {"model": "tiny", "language": "en", "device": "cpu"}
+    response = await async_client.post("/api/transcribe", files=files, data=data)
+    assert response.status_code == 413
+    assert "File too large." in response.json()["detail"]
+
+
 async def test_config_models_order(async_client):
     """Tests that /api/config returns models in correct order (ascending size)."""
     response = await async_client.get("/api/config")
@@ -147,3 +256,14 @@ async def test_cors_headers_present(async_client):
     # CORS preflight should return 200
     assert response.status_code == 200
     assert "access-control-allow-origin" in response.headers
+
+
+async def test_security_headers_present(async_client):
+    """Responses should include baseline security headers."""
+    response = await async_client.get("/api/config")
+    assert response.status_code == 200
+    assert "content-security-policy" in response.headers
+    assert "x-content-type-options" in response.headers
+    assert "referrer-policy" in response.headers
+    csp = response.headers["content-security-policy"]
+    assert "object-src 'none'" in csp

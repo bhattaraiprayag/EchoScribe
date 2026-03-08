@@ -11,7 +11,7 @@ class TestSessionCleanup:
 
     def test_session_info_has_timestamps(self):
         """SessionInfo should track creation and last activity times."""
-        from cleanup import SessionInfo
+        from backend.cleanup import SessionInfo
 
         before = time.time()
         info = SessionInfo(session_id="test-123", session=MagicMock())
@@ -22,7 +22,7 @@ class TestSessionCleanup:
 
     def test_session_info_update_activity(self):
         """update_activity should update last_activity timestamp."""
-        from cleanup import SessionInfo
+        from backend.cleanup import SessionInfo
 
         info = SessionInfo(session_id="test-123", session=MagicMock())
         old_activity = info.last_activity
@@ -34,7 +34,7 @@ class TestSessionCleanup:
 
     def test_session_info_is_expired(self):
         """is_expired should return True for sessions past TTL."""
-        from cleanup import SessionInfo
+        from backend.cleanup import SessionInfo
 
         info = SessionInfo(session_id="test-123", session=MagicMock())
 
@@ -53,7 +53,7 @@ class TestJobCleanup:
 
     def test_job_info_has_timestamps(self):
         """JobInfo should track creation and completion times."""
-        from cleanup import JobInfo
+        from backend.cleanup import JobInfo
 
         before = time.time()
         info = JobInfo(job_id="job-123", status="processing")
@@ -64,7 +64,7 @@ class TestJobCleanup:
 
     def test_job_info_mark_completed(self):
         """mark_completed should set completed_at and update status."""
-        from cleanup import JobInfo
+        from backend.cleanup import JobInfo
 
         info = JobInfo(job_id="job-123", status="processing")
         assert info.completed_at is None
@@ -79,7 +79,7 @@ class TestJobCleanup:
 
     def test_job_info_is_expired_not_completed(self):
         """In-progress jobs should never be expired."""
-        from cleanup import JobInfo
+        from backend.cleanup import JobInfo
 
         info = JobInfo(job_id="job-123", status="processing")
         # Even with very old timestamp
@@ -90,7 +90,7 @@ class TestJobCleanup:
 
     def test_job_info_is_expired_completed(self):
         """Completed jobs should expire after retention period."""
-        from cleanup import JobInfo
+        from backend.cleanup import JobInfo
 
         info = JobInfo(job_id="job-123", status="processing")
         info.mark_completed("completed", "result")
@@ -110,7 +110,7 @@ class TestCleanupManager:
 
     def test_cleanup_manager_removes_expired_sessions(self):
         """Expired sessions should be removed during cleanup."""
-        from cleanup import CleanupManager, SessionInfo
+        from backend.cleanup import CleanupManager, SessionInfo
 
         manager = CleanupManager(session_ttl_seconds=60, job_retention_seconds=120)
 
@@ -131,7 +131,7 @@ class TestCleanupManager:
 
     def test_cleanup_manager_removes_expired_jobs(self):
         """Expired completed jobs should be removed during cleanup."""
-        from cleanup import CleanupManager, JobInfo
+        from backend.cleanup import CleanupManager, JobInfo
 
         manager = CleanupManager(session_ttl_seconds=60, job_retention_seconds=60)
 
@@ -153,7 +153,7 @@ class TestCleanupManager:
 
     def test_cleanup_manager_keeps_in_progress_jobs(self):
         """In-progress jobs should never be removed regardless of age."""
-        from cleanup import CleanupManager, JobInfo
+        from backend.cleanup import CleanupManager, JobInfo
 
         manager = CleanupManager(session_ttl_seconds=60, job_retention_seconds=60)
 
@@ -174,7 +174,7 @@ class TestCleanupManager:
         import os
         import tempfile
 
-        from cleanup import CleanupManager, SessionInfo
+        from backend.cleanup import CleanupManager, SessionInfo
 
         manager = CleanupManager(session_ttl_seconds=60, job_retention_seconds=120)
 
@@ -207,7 +207,7 @@ class TestCleanupConfig:
 
     def test_default_cleanup_parameters(self):
         """Default cleanup parameters should be set."""
-        from cleanup import get_cleanup_config
+        from backend.cleanup import get_cleanup_config
 
         config = get_cleanup_config()
 
@@ -219,9 +219,9 @@ class TestCleanupConfig:
 
     def test_cleanup_parameters_from_config(self):
         """Cleanup should read parameters from config.yaml."""
-        from cleanup import get_cleanup_config
+        from backend.cleanup import get_cleanup_config
 
-        with patch("cleanup.get_config") as mock_config:
+        with patch("backend.cleanup.get_config") as mock_config:
             mock_config.return_value = {
                 "cleanup_parameters": {
                     "session_ttl_minutes": 30,
@@ -242,7 +242,7 @@ class TestTempDirectoryManager:
 
     def test_get_temp_dir_creates_directory(self):
         """get_temp_dir should create the temp directory if it doesn't exist."""
-        from cleanup import get_temp_dir
+        from backend.cleanup import get_temp_dir
 
         temp_dir = get_temp_dir()
         assert os.path.exists(temp_dir)
@@ -251,7 +251,7 @@ class TestTempDirectoryManager:
 
     def test_get_temp_dir_returns_same_path(self):
         """get_temp_dir should return the same path on repeated calls."""
-        from cleanup import get_temp_dir
+        from backend.cleanup import get_temp_dir
 
         dir1 = get_temp_dir()
         dir2 = get_temp_dir()
@@ -259,7 +259,7 @@ class TestTempDirectoryManager:
 
     def test_cleanup_orphaned_temp_files(self):
         """cleanup_orphaned_temp_files should remove old temp files."""
-        from cleanup import cleanup_orphaned_temp_files, get_temp_dir
+        from backend.cleanup import cleanup_orphaned_temp_files, get_temp_dir
 
         temp_dir = get_temp_dir()
 
@@ -277,7 +277,7 @@ class TestTempDirectoryManager:
 
     def test_cleanup_orphaned_preserves_recent_files(self):
         """cleanup_orphaned_temp_files should preserve recent files."""
-        from cleanup import cleanup_orphaned_temp_files, get_temp_dir
+        from backend.cleanup import cleanup_orphaned_temp_files, get_temp_dir
 
         temp_dir = get_temp_dir()
 

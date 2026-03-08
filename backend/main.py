@@ -7,21 +7,10 @@ import platform
 import re
 import uuid
 from contextlib import asynccontextmanager
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import starlette.formparsers as formparsers
 import torch
-from auth import api_key_auth
-from cleanup import (
-    CleanupManager,
-    JobInfo,
-    SessionInfo,
-    cleanup_orphaned_temp_files,
-    cleanup_temp_directory,
-    get_cleanup_config,
-    get_temp_dir,
-)
-from config_manager import config_data, get_config, save_config
 from fastapi import (
     BackgroundTasks,
     Depends,
@@ -37,14 +26,41 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from models import SettingsUpdate
-from pipeline import TranscriptionSession, convert_pcm_to_mp3
-from rate_limiter import upload_rate_limiter, websocket_rate_limiter
+from silero_vad import load_silero_vad
 from starlette.requests import ClientDisconnect
-from utils import (
+
+from backend.auth import (
+    WS_AUTH_TOKEN_TTL_SECONDS,
+    api_key_auth,
+    consume_ws_auth_token,
+    issue_ws_auth_token,
+)
+from backend.cleanup import (
+    CleanupManager,
+    JobInfo,
+    SessionInfo,
+    cleanup_orphaned_temp_files,
+    cleanup_temp_directory,
+    get_cleanup_config,
+    get_temp_dir,
+)
+from backend.config_manager import (
+    ConfigPersistenceError,
+    config_data,
+    get_config,
+    save_config,
+)
+from backend.models import SettingsUpdate
+from backend.pipeline import TranscriptionSession, convert_pcm_to_mp3
+from backend.rate_limiter import (
+    api_rate_limiter,
+    configure_rate_limiters,
+    upload_rate_limiter,
+    websocket_rate_limiter,
+)
+from backend.utils import (
     ALLOWED_AUDIO_EXTENSIONS,
-    MAX_FILE_SIZE,
-    VAD_CACHE_DIR,
+    get_max_file_size_bytes,
     get_model_status,
     get_whisper_model,
     get_whisper_model_sync,
@@ -53,7 +69,8 @@ from utils import (
     sanitize_filename,
 )
 
-formparsers.MultiPartParser.max_file_size = 10 * 1024 * 1024 * 1024
+formparsers.MultiPartParser.max_file_size = get_max_file_size_bytes(config_data)
+configure_rate_limiters(config_data)
 
 
 logging.basicConfig(
@@ -69,6 +86,26 @@ active_websockets: Dict[str, WebSocket] = {}
 cleanup_manager: CleanupManager = None
 cleanup_task: asyncio.Task = None
 shutdown_event: asyncio.Event = None
+REDACTED_SECRET = "***REDACTED***"
+
+
+def _redact_sensitive_settings(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Redact sensitive values from settings payloads returned to clients."""
+    auth_config = config.get("auth")
+    if isinstance(auth_config, dict) and auth_config.get("api_key"):
+        auth_config["api_key"] = REDACTED_SECRET
+    return config
+
+
+def _error_envelope(code: str, message: str, correlation_id: str) -> Dict[str, Any]:
+    """Build consistent safe error envelope for API responses."""
+    return {
+        "error": {
+            "code": code,
+            "message": message,
+            "correlation_id": correlation_id,
+        }
+    }
 
 
 async def cleanup_background_task() -> None:
@@ -120,16 +157,8 @@ async def lifespan(app):
     # Preload Silero VAD model at startup
     logger.info("Checking Silero VAD model availability...")
     try:
-        original_hub_dir = torch.hub.get_dir()
-        torch.hub.set_dir(VAD_CACHE_DIR)
-        logger.info(f"Loading Silero VAD model from cache dir: {VAD_CACHE_DIR}")
-        torch.hub.load(
-            repo_or_dir="snakers4/silero-vad",
-            model="silero_vad",
-            force_reload=False,
-            onnx=True,
-        )
-        torch.hub.set_dir(original_hub_dir)
+        logger.info("Loading Silero VAD model from installed silero-vad package")
+        load_silero_vad(onnx=True)
         logger.info("Silero VAD model is ready")
     except Exception as e:
         logger.error(f"Failed to preload Silero VAD model: {e}")
@@ -219,20 +248,48 @@ if cors_config.get("enabled", True):
         f"{cors_config.get('allow_origins', ['*'])}"
     )
 
+SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+        "style-src 'self' 'unsafe-inline' "
+        "https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
+        "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com data:; "
+        "connect-src 'self' ws: wss:; "
+        "img-src 'self' data: blob:; "
+        "media-src 'self' blob:; "
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Apply baseline security headers for all responses."""
+    response = await call_next(request)
+    for header, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
+    return response
+
 
 @app.get("/api/settings")
-def get_settings() -> JSONResponse:
+def get_settings(request: Request, _: str = Depends(api_key_auth)) -> JSONResponse:
     """Get current application settings.
 
     Returns:
-        JSON response with current configuration.
+        JSON response with current configuration and redacted secrets.
     """
-    return JSONResponse(content=get_config())
+    api_rate_limiter.check_rate_limit(request)
+    return JSONResponse(content=_redact_sensitive_settings(get_config()))
 
 
 @app.post("/api/settings")
 async def set_settings(
-    settings: SettingsUpdate, _: str = Depends(api_key_auth)
+    request: Request,
+    settings: SettingsUpdate,
+    _: str = Depends(api_key_auth),
 ) -> JSONResponse:
     """Update application settings with validation.
 
@@ -245,6 +302,7 @@ async def set_settings(
     Raises:
         HTTPException: 401 if authentication fails.
     """
+    api_rate_limiter.check_rate_limit(request)
     current_config = get_config()
 
     update_dict = settings.model_dump(exclude_unset=True)
@@ -259,8 +317,37 @@ async def set_settings(
             else:
                 current_config[key] = value
 
-    save_config(current_config)
+    try:
+        save_config(current_config)
+    except ConfigPersistenceError:
+        correlation_id = str(uuid.uuid4())
+        logger.error(
+            "[%s] Failed to persist settings update", correlation_id, exc_info=True
+        )
+        return JSONResponse(
+            content=_error_envelope(
+                code="CONFIG_PERSISTENCE_ERROR",
+                message="Failed to persist settings update",
+                correlation_id=correlation_id,
+            ),
+            status_code=500,
+        )
+
+    formparsers.MultiPartParser.max_file_size = get_max_file_size_bytes(current_config)
+    configure_rate_limiters(current_config)
     return JSONResponse(content={"message": "Settings updated successfully"})
+
+
+@app.post("/api/ws-auth-token")
+def issue_websocket_auth_token(
+    request: Request, api_key: str = Depends(api_key_auth)
+) -> JSONResponse:
+    """Issue short-lived token used to authenticate the WebSocket handshake."""
+    api_rate_limiter.check_rate_limit(request)
+    token = issue_ws_auth_token(api_key)
+    return JSONResponse(
+        content={"token": token, "expires_in_seconds": WS_AUTH_TOKEN_TTL_SECONDS}
+    )
 
 
 @app.post("/api/transcribe")
@@ -290,6 +377,8 @@ async def transcribe_file(
         HTTPException: If file validation or rate limit fails.
     """
     upload_rate_limiter.check_rate_limit(request)
+    max_file_size = get_max_file_size_bytes(get_config())
+    formparsers.MultiPartParser.max_file_size = max_file_size
 
     filename = file.filename or "unnamed"
     ext = os.path.splitext(filename.lower())[1]
@@ -326,13 +415,13 @@ async def transcribe_file(
             status_code=400, detail="Client disconnected during upload"
         ) from None
 
-    if MAX_FILE_SIZE > 0 and file_size > MAX_FILE_SIZE:
+    if file_size > max_file_size:
         os.unlink(file_path)
         del transcription_jobs[job_id]
         raise HTTPException(
             status_code=413,
             detail=(
-                f"File too large. Maximum size: {MAX_FILE_SIZE // (1024 * 1024)} MB"
+                f"File too large. Maximum size: {max_file_size // (1024 * 1024)} MB"
             ),
         )
 
@@ -477,7 +566,16 @@ def get_available_config() -> JSONResponse:
         "ko": "Korean",
     }
     return JSONResponse(
-        content={"devices": devices, "models": models, "languages": languages}
+        content={
+            "devices": devices,
+            "models": models,
+            "languages": languages,
+            "upload_parameters": {
+                "max_file_size_mb": get_max_file_size_bytes(get_config())
+                // (1024 * 1024)
+            },
+            "rate_limiting": get_config().get("rate_limiting", {}),
+        }
     )
 
 
@@ -503,15 +601,12 @@ SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 @app.websocket("/ws/{session_id}")
-async def websocket_endpoint(
-    websocket: WebSocket, session_id: str, api_key: str = None
-) -> None:
+async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     """WebSocket endpoint for real-time transcription.
 
     Args:
         websocket: WebSocket connection.
         session_id: Session identifier.
-        api_key: Optional API key for authentication (query parameter).
     """
     # Validate session ID length and format
     if len(session_id) > MAX_SESSION_ID_LENGTH:
@@ -526,25 +621,11 @@ async def websocket_endpoint(
         await websocket.close(code=4003, reason="Invalid session ID format")
         return
 
-    # Import here to avoid circular imports
-    from auth import verify_api_key
-
-    # Verify authentication before accepting connection
-    if not verify_api_key(api_key):
-        logger.warning(
-            f"WebSocket auth failed for session {session_id}: "
-            "invalid or missing API key"
-        )
-        await websocket.close(
-            code=4001, reason="Authentication failed: invalid or missing API key"
-        )
-        return
-
     # Get client IP for rate limiting
-    client_ip = websocket.client.host if websocket.client else "unknown"
-    forwarded = websocket.headers.get("X-Forwarded-For")
-    if forwarded:
-        client_ip = forwarded.split(",")[0].strip()
+    client_ip = websocket_rate_limiter.resolve_client_ip(
+        websocket.client.host if websocket.client else "unknown",
+        websocket.headers.get("X-Forwarded-For"),
+    )
 
     # Check WebSocket connection rate limit
     if not websocket_rate_limiter.can_connect(client_ip):
@@ -591,6 +672,21 @@ async def websocket_endpoint(
 
     try:
         client_config = await websocket.receive_json()
+        auth_token = client_config.get("auth_token")
+        if not consume_ws_auth_token(auth_token):
+            logger.warning(f"WebSocket auth failed for session {session_id}")
+            await websocket.send_json(
+                {
+                    "type": "status",
+                    "status": "error",
+                    "message": "Authentication failed",
+                    "progress": 0,
+                }
+            )
+            await websocket.close(code=4001, reason="Authentication failed")
+            return
+
+        client_config.pop("auth_token", None)
         logger.info(f"[{session_id}] Received configuration: {client_config}")
         model_size = client_config.get("model", "tiny")
         device = client_config.get("device", "cpu")
@@ -618,14 +714,32 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         logger.info(f"[{session_id}] WebSocket disconnected.")
     except Exception as e:
-        logger.error(f"[{session_id}] Error in WebSocket endpoint: {e}", exc_info=True)
-        # Try to send error status
+        correlation_id = str(uuid.uuid4())
+        logger.error(
+            "[%s][%s] Error in WebSocket endpoint: %s",
+            correlation_id,
+            session_id,
+            e,
+            exc_info=True,
+        )
         try:
             await websocket.send_json(
-                {"type": "status", "status": "error", "message": str(e), "progress": 0}
+                {
+                    "type": "status",
+                    "status": "error",
+                    "message": "Unexpected server error",
+                    "error_code": "WEBSOCKET_INTERNAL_ERROR",
+                    "correlation_id": correlation_id,
+                    "progress": 0,
+                }
             )
-        except Exception:
-            pass
+        except Exception as send_error:
+            logger.warning(
+                "[%s][%s] Failed to send websocket error payload: %s",
+                correlation_id,
+                session_id,
+                send_error,
+            )
     finally:
         # Release rate limiter connection count
         websocket_rate_limiter.release_connection(client_ip)

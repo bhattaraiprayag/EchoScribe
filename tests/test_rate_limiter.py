@@ -13,7 +13,7 @@ class TestRateLimiter:
 
     def test_rate_limiter_allows_requests_under_limit(self):
         """Requests under limit should be allowed."""
-        from rate_limiter import RateLimiter
+        from backend.rate_limiter import RateLimiter
 
         limiter = RateLimiter(requests_per_minute=10, enabled=True)
         limiter.reset()
@@ -30,7 +30,7 @@ class TestRateLimiter:
 
     def test_rate_limiter_blocks_when_limit_exceeded(self):
         """Requests over limit should be blocked."""
-        from rate_limiter import RateLimiter
+        from backend.rate_limiter import RateLimiter
 
         limiter = RateLimiter(requests_per_minute=5, enabled=True)
         limiter.reset()
@@ -50,7 +50,7 @@ class TestRateLimiter:
 
     def test_rate_limiter_tracks_remaining(self):
         """Should correctly track remaining requests."""
-        from rate_limiter import RateLimiter
+        from backend.rate_limiter import RateLimiter
 
         limiter = RateLimiter(requests_per_minute=10, enabled=True)
         limiter.reset()
@@ -73,7 +73,7 @@ class TestRateLimiter:
 
     def test_rate_limiter_disabled(self):
         """Disabled rate limiter should allow all requests."""
-        from rate_limiter import RateLimiter
+        from backend.rate_limiter import RateLimiter
 
         limiter = RateLimiter(requests_per_minute=1, enabled=False)
         limiter.reset()
@@ -90,7 +90,7 @@ class TestRateLimiter:
 
     def test_rate_limiter_per_ip(self):
         """Rate limiting should be per IP address."""
-        from rate_limiter import RateLimiter
+        from backend.rate_limiter import RateLimiter
 
         limiter = RateLimiter(requests_per_minute=2, enabled=True)
         limiter.reset()
@@ -115,10 +115,14 @@ class TestRateLimiter:
         assert remaining == 2
 
     def test_rate_limiter_uses_x_forwarded_for(self):
-        """Should use X-Forwarded-For header when present."""
-        from rate_limiter import RateLimiter
+        """Should use X-Forwarded-For only for trusted proxies."""
+        from backend.rate_limiter import RateLimiter
 
-        limiter = RateLimiter(requests_per_minute=2, enabled=True)
+        limiter = RateLimiter(
+            requests_per_minute=2,
+            enabled=True,
+            trusted_proxies=["10.0.0.1/32"],
+        )
         limiter.reset()
 
         mock_request = MagicMock()
@@ -132,9 +136,33 @@ class TestRateLimiter:
         is_limited, _ = limiter.is_rate_limited(mock_request)
         assert is_limited
 
+    def test_rate_limiter_ignores_spoofed_x_forwarded_for_from_untrusted_source(self):
+        """Untrusted clients must not influence effective rate-limit IP."""
+        from backend.rate_limiter import RateLimiter
+
+        limiter = RateLimiter(
+            requests_per_minute=1,
+            enabled=True,
+            trusted_proxies=["10.0.0.1/32"],
+        )
+        limiter.reset()
+
+        spoofed_request = MagicMock()
+        spoofed_request.client.host = "198.51.100.10"
+        spoofed_request.headers.get.return_value = "203.0.113.50, 70.41.3.18"
+        limiter.record_request(spoofed_request)
+
+        other_request = MagicMock()
+        other_request.client.host = "203.0.113.50"
+        other_request.headers.get.return_value = None
+
+        # If spoofed header were trusted, this would be rate-limited.
+        is_limited, _ = limiter.is_rate_limited(other_request)
+        assert not is_limited
+
     def test_check_rate_limit_raises_exception(self):
         """check_rate_limit should raise HTTPException when limited."""
-        from rate_limiter import RateLimiter
+        from backend.rate_limiter import RateLimiter
 
         limiter = RateLimiter(requests_per_minute=1, enabled=True)
         limiter.reset()
@@ -155,7 +183,7 @@ class TestRateLimiter:
 
     def test_rate_limiter_reset(self):
         """reset() should clear all counters."""
-        from rate_limiter import RateLimiter
+        from backend.rate_limiter import RateLimiter
 
         limiter = RateLimiter(requests_per_minute=1, enabled=True)
 
@@ -177,12 +205,40 @@ class TestRateLimiter:
 
     def test_global_rate_limiters_exist(self):
         """Global rate limiter instances should be defined."""
-        from rate_limiter import api_rate_limiter, upload_rate_limiter
+        from backend.rate_limiter import api_rate_limiter, upload_rate_limiter
 
         assert api_rate_limiter is not None
         assert upload_rate_limiter is not None
-        assert api_rate_limiter.requests_per_minute == 100
-        assert upload_rate_limiter.requests_per_minute == 10
+        assert api_rate_limiter.requests_per_minute > 0
+        assert upload_rate_limiter.requests_per_minute > 0
+
+    def test_configure_rate_limiters_applies_runtime_settings(self):
+        """Global limiters should update from configuration."""
+        from backend.config_manager import get_config
+        from backend.rate_limiter import (
+            api_rate_limiter,
+            configure_rate_limiters,
+            upload_rate_limiter,
+            websocket_rate_limiter,
+        )
+
+        runtime = {
+            "rate_limiting": {
+                "enabled": True,
+                "requests_per_minute": 42,
+                "uploads_per_minute": 7,
+                "websocket_connections_per_ip": 3,
+                "trusted_proxies": ["10.0.0.1/32"],
+            }
+        }
+
+        try:
+            configure_rate_limiters(runtime)
+            assert api_rate_limiter.requests_per_minute == 42
+            assert upload_rate_limiter.requests_per_minute == 7
+            assert websocket_rate_limiter.max_connections_per_ip == 3
+        finally:
+            configure_rate_limiters(get_config())
 
 
 class TestRateLimiterMemoryCleanup:
@@ -190,7 +246,7 @@ class TestRateLimiterMemoryCleanup:
 
     def test_cleanup_stale_ips_removes_old_entries(self):
         """cleanup_stale_ips should remove IPs with no recent requests."""
-        from rate_limiter import RateLimiter
+        from backend.rate_limiter import RateLimiter
 
         limiter = RateLimiter(requests_per_minute=10, enabled=True)
         limiter.reset()
@@ -220,7 +276,7 @@ class TestRateLimiterMemoryCleanup:
 
     def test_cleanup_stale_ips_preserves_recent_entries(self):
         """cleanup_stale_ips should keep IPs with recent requests."""
-        from rate_limiter import RateLimiter
+        from backend.rate_limiter import RateLimiter
 
         limiter = RateLimiter(requests_per_minute=10, enabled=True)
         limiter.reset()
@@ -250,7 +306,7 @@ class TestRateLimiterMemoryCleanup:
 
     def test_cleanup_stale_ips_removes_empty_entries(self):
         """cleanup_stale_ips should remove IPs with empty request lists."""
-        from rate_limiter import RateLimiter
+        from backend.rate_limiter import RateLimiter
 
         limiter = RateLimiter(requests_per_minute=10, enabled=True)
         limiter.reset()
@@ -270,7 +326,7 @@ class TestRateLimiterMemoryCleanup:
 
     def test_periodic_cleanup_called_on_check(self):
         """Stale IP cleanup should be triggered periodically during checks."""
-        from rate_limiter import RateLimiter
+        from backend.rate_limiter import RateLimiter
 
         limiter = RateLimiter(requests_per_minute=10, enabled=True)
         limiter.reset()
@@ -298,13 +354,13 @@ class TestWebSocketRateLimiter:
 
     def test_websocket_rate_limiter_exists(self):
         """WebSocket rate limiter should be available."""
-        from rate_limiter import websocket_rate_limiter
+        from backend.rate_limiter import websocket_rate_limiter
 
         assert websocket_rate_limiter is not None
 
     def test_websocket_rate_limiter_tracks_connections(self):
         """WebSocket rate limiter should track connections per IP."""
-        from rate_limiter import WebSocketRateLimiter
+        from backend.rate_limiter import WebSocketRateLimiter
 
         limiter = WebSocketRateLimiter(max_connections_per_ip=3, enabled=True)
         limiter.reset()
@@ -330,7 +386,7 @@ class TestWebSocketRateLimiter:
 
     def test_websocket_rate_limiter_disabled(self):
         """When disabled, WebSocket rate limiter should allow all connections."""
-        from rate_limiter import WebSocketRateLimiter
+        from backend.rate_limiter import WebSocketRateLimiter
 
         limiter = WebSocketRateLimiter(max_connections_per_ip=1, enabled=False)
         ip = "192.168.1.1"
@@ -342,7 +398,7 @@ class TestWebSocketRateLimiter:
 
     def test_websocket_rate_limiter_tracks_per_ip(self):
         """WebSocket rate limiter should track each IP separately."""
-        from rate_limiter import WebSocketRateLimiter
+        from backend.rate_limiter import WebSocketRateLimiter
 
         limiter = WebSocketRateLimiter(max_connections_per_ip=2, enabled=True)
         limiter.reset()
@@ -358,3 +414,20 @@ class TestWebSocketRateLimiter:
         # IP2 should still be able to connect
         assert limiter.can_connect(ip2) is True
         limiter.record_connection(ip2)
+
+    def test_websocket_rate_limiter_resolves_forwarded_ip_for_trusted_proxy(self):
+        """Forwarded headers should be honored only from trusted proxy sources."""
+        from backend.rate_limiter import WebSocketRateLimiter
+
+        limiter = WebSocketRateLimiter(
+            max_connections_per_ip=2,
+            enabled=True,
+            trusted_proxies=["10.0.0.1/32"],
+        )
+        trusted_ip = limiter.resolve_client_ip("10.0.0.1", "203.0.113.5, 198.51.100.2")
+        untrusted_ip = limiter.resolve_client_ip(
+            "198.51.100.10", "203.0.113.5, 198.51.100.2"
+        )
+
+        assert trusted_ip == "203.0.113.5"
+        assert untrusted_ip == "198.51.100.10"

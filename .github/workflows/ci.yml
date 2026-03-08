@@ -59,8 +59,28 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --dev
 
-      - name: Run Tests
-        run: uv run pytest
+      - name: Run Tests with Coverage
+        run: uv run pytest --cov=backend --cov-report=term-missing --cov-report=xml
+
+      - name: Upload Coverage Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+      - name: Startup Smoke Check
+        run: |
+          set -euo pipefail
+          log_file="$(mktemp)"
+          status=0
+          timeout 25 uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 >"$log_file" 2>&1 || status=$?
+          if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
+            cat "$log_file"
+            exit "$status"
+          fi
+          grep -q "Application startup complete" "$log_file"
+          rm -f "$log_file"
 
   build:
     name: Docker Build

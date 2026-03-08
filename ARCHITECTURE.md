@@ -20,6 +20,7 @@ The real-time transcription relies on a multi-stage pipeline coordinated by `asy
 1.  **Ingestion (WebSocket)**:
 
     - Receives raw 16-bit PCM audio chunks from the client.
+    - Requires a short-lived one-time `auth_token` in the initial configuration message.
     - Pushes data independently to a `raw_audio_queue`.
     - **Design Decision**: Decoupling ingestion prevents network latency or client stuttering from blocking the processing logic.
 
@@ -38,6 +39,14 @@ The real-time transcription relies on a multi-stage pipeline coordinated by `asy
 
 4.  **Result Emitter**:
     - Picks up transcribed text and sends it back via the WebSocket.
+
+### Security Controls
+
+- **Authentication**: API key auth can be enabled in config and is enforced on settings updates, uploads, and WebSocket token issuance.
+- **WebSocket Hardening**: The browser exchanges API key auth for a short-lived one-time token via `POST /api/ws-auth-token`, then presents that token during WebSocket session bootstrap.
+- **Rate Limiting**: Config-driven in-memory limits are applied for API requests, uploads, and WebSocket connections.
+- **Trusted Proxies**: `X-Forwarded-For` is only honored when the direct source IP is inside configured trusted proxy CIDRs.
+- **Settings Hygiene**: `GET /api/settings` redacts sensitive values (e.g., `auth.api_key`) before returning payloads.
 
 ### 3. Dependency Management (Migration to `uv`)
 
@@ -63,7 +72,7 @@ We strictly adhere to "GitOps" and "Shift-Left" security principles.
 - **CI Pipeline**: GitHub Actions workflow that runs on every Pull Request and Push to main. It enforces:
   - **Linting**: Ruff (Python).
   - **Formatting**: Ruff (Python) and Prettier (Frontend).
-  - **Testing**: Full pytest suite coverage.
+  - **Testing**: Full pytest suite and coverage checks.
   - **Build**: Docker image verification.
 - **Pre-Commit Hooks**: Local enforcement of code quality and security (secret scanning) to prevent bad commits.
 - **Infrastructure**: Dockerfile follows best practices (non-root user, multi-stage builds).

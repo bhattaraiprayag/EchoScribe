@@ -6,7 +6,7 @@ import os
 import re
 import threading
 from pathlib import Path
-from typing import Callable, Dict, Optional, Set
+from typing import Any, Callable, Dict, Optional, Set
 
 from faster_whisper import WhisperModel
 from huggingface_hub import HfFileSystem, hf_hub_download
@@ -61,7 +61,7 @@ ALLOWED_AUDIO_EXTENSIONS: Set[str] = {
     ".avi",
     ".mov",
 }
-MAX_FILE_SIZE: int = 0
+DEFAULT_MAX_FILE_SIZE_MB = 100
 
 model_cache: Dict[str, WhisperModel] = {}
 model_cache_lock = asyncio.Lock()
@@ -75,6 +75,20 @@ REQUIRED_MODEL_FILES = [
     "vocabulary.json",
     "preprocessor_config.json",
 ]
+
+
+def get_max_file_size_bytes(config: Optional[Dict[str, Any]] = None) -> int:
+    """Get effective max upload size in bytes from configuration."""
+    if config is None:
+        from backend.config_manager import get_config
+
+        config = get_config()
+
+    upload_config = config.get("upload_parameters", {})
+    max_file_size_mb = upload_config.get("max_file_size_mb", DEFAULT_MAX_FILE_SIZE_MB)
+    if not isinstance(max_file_size_mb, int) or max_file_size_mb < 1:
+        raise ValueError("upload_parameters.max_file_size_mb must be an integer >= 1")
+    return max_file_size_mb * 1024 * 1024
 
 
 def get_model_status(model_size: str, cache_dir: Optional[str] = None) -> Dict:
