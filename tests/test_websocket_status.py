@@ -1,4 +1,4 @@
-"""Hermetic tests for WebSocket status and input validation."""
+"""Hermetic tests for WebSocket readiness and validation behavior."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -24,34 +24,39 @@ def _collect_statuses(websocket, max_messages: int = 4) -> list[dict]:
 
 
 class TestWebSocketStatusMessages:
-    """Tests for deterministic status message behavior."""
+    """Tests for deterministic status payloads."""
 
-    def test_cached_model_emits_loading_then_ready(self, sync_test_client):
-        with patch("backend.main.is_model_cached", return_value=True):
+    def test_loaded_model_emits_ready(self, sync_test_client):
+        with patch("backend.main.is_model_loaded", return_value=True):
             with sync_test_client.websocket_connect(
-                "/ws/test-status-cached"
+                "/ws/test-status-ready"
             ) as websocket:
                 websocket.send_json(
                     {"model": "tiny", "device": "cpu", "language": "en"}
                 )
                 statuses = _collect_statuses(websocket)
 
-        assert [s["status"] for s in statuses][:2] == ["loading", "ready"]
-        assert all("message" in s and "progress" in s for s in statuses)
+        assert [status["status"] for status in statuses] == ["ready"]
+        assert statuses[0]["message"] == "Connected. Start speaking."
+        assert statuses[0]["progress"] == 1.0
 
-    def test_uncached_model_emits_downloading_then_ready(self, sync_test_client):
-        with patch("backend.main.is_model_cached", return_value=False):
+    def test_unloaded_model_emits_error(self, sync_test_client):
+        with patch("backend.main.is_model_loaded", return_value=False):
             with sync_test_client.websocket_connect(
-                "/ws/test-status-uncached"
+                "/ws/test-status-unloaded"
             ) as websocket:
                 websocket.send_json(
                     {"model": "tiny", "device": "cpu", "language": "en"}
                 )
                 statuses = _collect_statuses(websocket)
+                with pytest.raises(WebSocketDisconnect) as exc:
+                    websocket.receive_json()
 
-        assert [s["status"] for s in statuses][:2] == ["downloading", "ready"]
+        assert statuses[0]["status"] == "error"
+        assert statuses[0]["message"] == "Load the tiny model on cpu before recording."
+        assert exc.value.code == 4005
 
-    def test_valid_models_emit_ready(self, sync_test_client):
+    def test_valid_models_emit_ready_when_loaded(self, sync_test_client):
         valid_models = [
             "tiny",
             "base",
@@ -60,7 +65,7 @@ class TestWebSocketStatusMessages:
             "large-v3",
             "distil-large-v3",
         ]
-        with patch("backend.main.is_model_cached", return_value=True):
+        with patch("backend.main.is_model_loaded", return_value=True):
             for model in valid_models:
                 with sync_test_client.websocket_connect(
                     f"/ws/test-valid-model-{model}"
@@ -69,7 +74,7 @@ class TestWebSocketStatusMessages:
                         {"model": model, "device": "cpu", "language": "en"}
                     )
                     statuses = _collect_statuses(websocket)
-                assert any(s["status"] == "ready" for s in statuses)
+                assert any(status["status"] == "ready" for status in statuses)
 
 
 class TestWebSocketErrorHandling:
@@ -89,7 +94,7 @@ class TestWebSocketErrorHandling:
             "backend.main.get_whisper_model",
             AsyncMock(side_effect=RuntimeError("sensitive internals")),
         )
-        with patch("backend.main.is_model_cached", return_value=True):
+        with patch("backend.main.is_model_loaded", return_value=True):
             with sync_test_client.websocket_connect(
                 "/ws/test-internal-error"
             ) as websocket:
@@ -98,7 +103,9 @@ class TestWebSocketErrorHandling:
                 )
                 statuses = _collect_statuses(websocket, max_messages=3)
 
-        error_status = next(s for s in statuses if s["status"] == "error")
+        error_status = next(
+            status for status in statuses if status["status"] == "error"
+        )
         assert error_status["message"] == "Unexpected server error"
         assert error_status["error_code"] == "WEBSOCKET_INTERNAL_ERROR"
         assert isinstance(error_status["correlation_id"], str)

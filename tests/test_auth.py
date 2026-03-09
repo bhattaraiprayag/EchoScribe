@@ -2,6 +2,8 @@
 
 """Tests for optional API key authentication middleware."""
 
+from unittest.mock import patch
+
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
@@ -362,20 +364,21 @@ class TestWebSocketAuthentication:
             assert token_response.status_code == 200
             token = token_response.json()["token"]
 
-            with sync_test_client.websocket_connect("/ws/test-session") as websocket:
-                websocket.send_json(
-                    {
-                        "model": "tiny",
-                        "device": "cpu",
-                        "language": "en",
-                        "auth_token": token,
-                    }
-                )
-                first_status = websocket.receive_json()
-                second_status = websocket.receive_json()
+            with patch("backend.main.is_model_loaded", return_value=True):
+                with sync_test_client.websocket_connect(
+                    "/ws/test-session"
+                ) as websocket:
+                    websocket.send_json(
+                        {
+                            "model": "tiny",
+                            "device": "cpu",
+                            "language": "en",
+                            "auth_token": token,
+                        }
+                    )
+                    first_status = websocket.receive_json()
 
-            assert first_status["status"] in {"loading", "downloading"}
-            assert second_status["status"] == "ready"
+            assert first_status["status"] == "ready"
         finally:
             monkeypatch.setattr("backend.auth._auth_config_override", None)
             from backend.auth import reset_ws_auth_tokens
@@ -390,13 +393,14 @@ class TestWebSocketAuthentication:
             "backend.auth._auth_config_override", {"enabled": False, "api_key": ""}
         )
         try:
-            with sync_test_client.websocket_connect("/ws/test-session") as websocket:
-                websocket.send_json(
-                    {"model": "tiny", "device": "cpu", "language": "en"}
-                )
-                first_status = websocket.receive_json()
-                second_status = websocket.receive_json()
-            assert first_status["status"] in {"loading", "downloading"}
-            assert second_status["status"] == "ready"
+            with patch("backend.main.is_model_loaded", return_value=True):
+                with sync_test_client.websocket_connect(
+                    "/ws/test-session"
+                ) as websocket:
+                    websocket.send_json(
+                        {"model": "tiny", "device": "cpu", "language": "en"}
+                    )
+                    first_status = websocket.receive_json()
+            assert first_status["status"] == "ready"
         finally:
             monkeypatch.setattr("backend.auth._auth_config_override", None)

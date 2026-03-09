@@ -50,7 +50,7 @@ This guide will help you get EchoScribe up and running quickly on your local mac
 1.  **Start the container:**
 
     ```powershell
-    docker-compose up --build
+    make docker-run
     ```
 
 2.  **Access the App:**

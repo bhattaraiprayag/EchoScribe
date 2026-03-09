@@ -1,5 +1,6 @@
 services:
   echoscribe:
+    image: ${DOCKER_IMAGE:-echoscribe:test}
     build:
       context: .
       dockerfile: Dockerfile
@@ -16,6 +17,7 @@ services:
       # Optional: Set CUDA visible devices
       - NVIDIA_VISIBLE_DEVICES=all
       - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     deploy:
       resources:
         reservations:

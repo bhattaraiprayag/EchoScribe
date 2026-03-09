@@ -8,10 +8,11 @@ DOCKER ?= docker
 APP_MODULE ?= backend.main:app
 HOST ?= 0.0.0.0
 PORT ?= 8000
+SMOKE_PORT ?= 8765
 DOCKER_IMAGE ?= echoscribe:test
 COV_ARGS ?= --cov=backend --cov-report=term-missing
 
-.PHONY: help sync install lint format format-check pre-commit test test-target coverage smoke docker-build check clean clean-cache clean-pyc
+.PHONY: help sync install lint format format-check pre-commit test test-target coverage smoke docker-build docker-run docker-up docker-down docker-restart docker-logs check clean clean-cache clean-pyc
 
 help:
 >@printf "Available targets:\n"
@@ -24,7 +25,9 @@ help:
 >@printf "  %-14s %s\n" "test-target" "Run selected tests (TEST=tests/test_api.py)"
 >@printf "  %-14s %s\n" "coverage" "Run pytest coverage gate for backend package"
 >@printf "  %-14s %s\n" "smoke" "Run startup smoke check for backend.main:app"
->@printf "  %-14s %s\n" "docker-build" "Build Docker image"
+>@printf "  %-14s %s\n" "docker-build" "Build Docker image only"
+>@printf "  %-14s %s\n" "docker-run" "Build and start Docker stack in detached mode"
+>@printf "  %-14s %s\n" "docker-up" "Alias for docker-run"
 >@printf "  %-14s %s\n" "check" "Run lint + format-check + pre-commit + test + coverage + smoke"
 >@printf "  %-14s %s\n" "clean" "Remove Python/test/build caches safely"
 
@@ -56,10 +59,23 @@ coverage:
 >$(UV) run pytest -q $(COV_ARGS)
 
 smoke:
->bash -c 'set -euo pipefail; log=$$(mktemp); status=0; timeout 25 $(UV) run uvicorn $(APP_MODULE) --host $(HOST) --port $(PORT) >"$$log" 2>&1 || status=$$?; if [[ "$$status" -eq 0 || "$$status" -eq 124 ]]; then grep -q "Application startup complete" "$$log" || { cat "$$log"; rm -f "$$log"; exit 1; }; else cat "$$log"; rm -f "$$log"; exit "$$status"; fi; rm -f "$$log"'
+>bash -c 'set -euo pipefail; log=$$(mktemp); status=0; timeout 25 $(UV) run uvicorn $(APP_MODULE) --host $(HOST) --port $(SMOKE_PORT) >"$$log" 2>&1 || status=$$?; if [[ "$$status" -eq 0 || "$$status" -eq 124 ]]; then grep -q "Application startup complete" "$$log" || { cat "$$log"; rm -f "$$log"; exit 1; }; else cat "$$log"; rm -f "$$log"; exit "$$status"; fi; rm -f "$$log"'
 
 docker-build:
 >$(DOCKER) build --tag $(DOCKER_IMAGE) .
+
+docker-run: docker-build
+>DOCKER_IMAGE=$(DOCKER_IMAGE) $(DOCKER) compose up -d
+
+docker-up: docker-run
+
+docker-down:
+>$(DOCKER) compose down
+
+docker-restart: docker-down docker-run
+
+docker-logs:
+>$(DOCKER) compose logs -f
 
 check: lint format-check pre-commit test coverage smoke
 

@@ -2,6 +2,7 @@
 
 import io
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -143,12 +144,14 @@ async def test_ws_auth_token_issued_with_valid_api_key(async_client, monkeypatch
 
 
 async def test_websocket_connection(sync_test_client):
-    """Tests establishing a WebSocket connection and sending the initial config."""
-    # Use starlette's TestClient for WebSocket testing
-    with sync_test_client.websocket_connect("/ws/test-session") as websocket:
-        websocket.send_json({"model": "tiny", "device": "cpu", "language": "en"})
-        # The server shouldn't send any immediate response for just config
-        # We just verify connection works
+    """Tests establishing a WebSocket connection when the model is preloaded."""
+    with patch("backend.main.is_model_loaded", return_value=True):
+        with sync_test_client.websocket_connect("/ws/test-session") as websocket:
+            websocket.send_json({"model": "tiny", "device": "cpu", "language": "en"})
+            payload = websocket.receive_json()
+
+    assert payload["type"] == "status"
+    assert payload["status"] == "ready"
 
 
 @pytest.mark.skipif(
@@ -159,18 +162,19 @@ async def test_file_transcription(async_client):
     """Tests the file upload endpoint (job submission only, not full transcription)."""
     audio_file_path = TEST_DIR / "transcribe_test.mp3"
 
-    with open(audio_file_path, "rb") as f:
-        files = {"file": (audio_file_path.name, f, "audio/mpeg")}
-        data = {"model": "tiny", "language": "en", "device": "cpu"}
+    with patch("backend.main.is_model_loaded", return_value=True):
+        with open(audio_file_path, "rb") as f:
+            files = {"file": (audio_file_path.name, f, "audio/mpeg")}
+            data = {"model": "tiny", "language": "en", "device": "cpu"}
 
-        post_response = await async_client.post(
-            "/api/transcribe", files=files, data=data
-        )
+            post_response = await async_client.post(
+                "/api/transcribe", files=files, data=data
+            )
 
-        # Just test that the endpoint accepts the file and returns a job_id
-        assert post_response.status_code == 200
-        response_json = post_response.json()
-        assert "job_id" in response_json
+            # Just test that the endpoint accepts the file and returns a job_id
+            assert post_response.status_code == 200
+            response_json = post_response.json()
+            assert "job_id" in response_json
 
 
 async def test_model_status_endpoint(async_client):
@@ -183,8 +187,21 @@ async def test_model_status_endpoint(async_client):
     assert "cached" in data
     assert "model" in data
     assert "device" in data
+    assert "loaded" in data
     assert data["model"] == "tiny"
     assert data["device"] == "cpu"
+
+
+async def test_model_status_reflects_loaded_state(async_client, monkeypatch):
+    """Model status should include whether the model/device pair is loaded."""
+    monkeypatch.setattr("backend.main.is_model_loaded", lambda model, device: True)
+
+    response = await async_client.get(
+        "/api/model/status", params={"model": "tiny", "device": "cpu"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["loaded"] is True
 
 
 async def test_model_status_unknown_model(async_client):
@@ -209,6 +226,43 @@ async def test_model_status_includes_repo_id(async_client):
     assert "Systran" in data["repo_id"]
 
 
+async def test_model_load_endpoint_returns_loaded_status(async_client, monkeypatch):
+    """Explicit model load endpoint should surface loaded readiness."""
+    monkeypatch.setattr("backend.main.is_model_loaded", lambda model, device: True)
+    monkeypatch.setattr(
+        "backend.main.get_model_status",
+        lambda model: {
+            "cached": True,
+            "repo_id": "Systran/faster-whisper-tiny",
+            "missing_files": [],
+            "repairable_files": [],
+        },
+    )
+
+    response = await async_client.post(
+        "/api/model/load", data={"model": "tiny", "device": "cpu"}
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["loaded"] is True
+    assert payload["model"] == "tiny"
+    assert payload["device"] == "cpu"
+
+
+async def test_transcribe_requires_loaded_model(async_client):
+    """Batch transcription should be rejected until the model is loaded."""
+    files = {"file": ("sample.mp3", io.BytesIO(b"abc"), "audio/mpeg")}
+    data = {"model": "tiny", "language": "en", "device": "cpu"}
+
+    response = await async_client.post("/api/transcribe", files=files, data=data)
+
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["error"]["code"] == "MODEL_NOT_LOADED"
+    assert "Load the tiny model on cpu" in payload["error"]["message"]
+
+
 async def test_config_exposes_upload_limits(async_client):
     """Tests /api/config includes effective upload size limits."""
     response = await async_client.get("/api/config")
@@ -223,7 +277,8 @@ async def test_oversized_upload_returns_413(async_client, monkeypatch):
     monkeypatch.setattr("backend.main.get_max_file_size_bytes", lambda config=None: 64)
     files = {"file": ("oversized.mp3", io.BytesIO(b"x" * 128), "audio/mpeg")}
     data = {"model": "tiny", "language": "en", "device": "cpu"}
-    response = await async_client.post("/api/transcribe", files=files, data=data)
+    with patch("backend.main.is_model_loaded", return_value=True):
+        response = await async_client.post("/api/transcribe", files=files, data=data)
     assert response.status_code == 413
     assert "File too large." in response.json()["detail"]
 

@@ -1,6 +1,7 @@
 """Utility functions for file validation, sanitization, and model caching."""
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Set
 
 from faster_whisper import WhisperModel
-from huggingface_hub import HfFileSystem, hf_hub_download
+from faster_whisper.utils import download_model as download_model_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +24,25 @@ MODELS_CACHE_DIR = os.getenv("MODELS_CACHE_DIR", str(_PROJECT_ROOT / "models_cac
 WHISPER_CACHE_DIR = os.path.join(MODELS_CACHE_DIR, "whisper_models")
 VAD_CACHE_DIR = os.path.join(MODELS_CACHE_DIR, "silero_vad")
 
-# Ensure cache directories exist
-Path(WHISPER_CACHE_DIR).mkdir(parents=True, exist_ok=True)
-Path(VAD_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+def _get_whisper_cache_dir(cache_dir: Optional[str] = None) -> str:
+    """Return the configured Whisper cache directory."""
+    return cache_dir or WHISPER_CACHE_DIR
+
+
+def _ensure_whisper_cache_dir(cache_dir: Optional[str] = None) -> str:
+    """Ensure the Whisper cache directory exists before writes occur."""
+    resolved_dir = Path(_get_whisper_cache_dir(cache_dir))
+    try:
+        resolved_dir.mkdir(parents=True, exist_ok=True)
+    except PermissionError as exc:
+        raise PermissionError(
+            f"Cannot write to Whisper cache directory '{resolved_dir}'. "
+            "Ensure the models cache path is writable by the application user "
+            "or set MODELS_CACHE_DIR to a writable location."
+        ) from exc
+    return str(resolved_dir)
+
 
 # Mapping of model names to HuggingFace repo IDs
 MODEL_REPO_MAP: Dict[str, str] = {
@@ -67,14 +84,15 @@ model_cache: Dict[str, WhisperModel] = {}
 model_cache_lock = asyncio.Lock()
 sync_model_cache_lock = threading.Lock()  # For synchronous access in background tasks
 
-# Required files for faster-whisper models (only download what's needed)
-REQUIRED_MODEL_FILES = [
+REQUIRED_MODEL_PATTERNS = [
     "config.json",
     "model.bin",
     "tokenizer.json",
-    "vocabulary.json",
-    "preprocessor_config.json",
+    "vocabulary.*",
 ]
+OPTIONAL_MODEL_FILES = ["preprocessor_config.json"]
+VOCABULARY_PATTERN = "vocabulary.*"
+REPAIRED_VOCABULARY_FILENAME = "vocabulary.json"
 
 
 def get_max_file_size_bytes(config: Optional[Dict[str, Any]] = None) -> int:
@@ -91,6 +109,100 @@ def get_max_file_size_bytes(config: Optional[Dict[str, Any]] = None) -> int:
     return max_file_size_mb * 1024 * 1024
 
 
+def _get_model_snapshot_dir(
+    model_size: str, cache_dir: Optional[str] = None
+) -> tuple[Optional[Path], Optional[str]]:
+    """Return the newest cached snapshot directory for a model, if present."""
+    cache_dir = _get_whisper_cache_dir(cache_dir)
+
+    repo_id = MODEL_REPO_MAP.get(model_size)
+    if not repo_id:
+        return None, None
+
+    cache_name = f"models--{repo_id.replace('/', '--')}"
+    snapshots_dir = Path(cache_dir) / cache_name / "snapshots"
+    if not snapshots_dir.exists():
+        return None, repo_id
+
+    snapshot_dirs = sorted(
+        (path for path in snapshots_dir.iterdir() if path.is_dir()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if not snapshot_dirs:
+        return None, repo_id
+
+    return snapshot_dirs[0], repo_id
+
+
+def _find_matching_snapshot_files(snapshot_dir: Path, pattern: str) -> list[Path]:
+    """Return sorted files in a snapshot directory matching a required pattern."""
+    return sorted(path for path in snapshot_dir.glob(pattern) if path.is_file())
+
+
+def _display_pattern_name(pattern: str) -> str:
+    """Normalize wildcard patterns to user-facing missing file names."""
+    return REPAIRED_VOCABULARY_FILENAME if pattern == VOCABULARY_PATTERN else pattern
+
+
+def repair_model_snapshot(snapshot_dir: Path) -> list[str]:
+    """Repair a partial snapshot by synthesizing vocabulary.json from tokenizer.json."""
+    if _find_matching_snapshot_files(snapshot_dir, VOCABULARY_PATTERN):
+        return []
+
+    tokenizer_path = snapshot_dir / "tokenizer.json"
+    if not tokenizer_path.exists():
+        return []
+
+    try:
+        with tokenizer_path.open("r", encoding="utf-8") as handle:
+            tokenizer_payload = json.load(handle)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "tokenizer.json is invalid and cannot repair vocabulary"
+        ) from exc
+
+    tokenizer_model = tokenizer_payload.get("model", {})
+    vocab_entries = tokenizer_model.get("vocab")
+    if not isinstance(vocab_entries, dict) or not vocab_entries:
+        raise RuntimeError("tokenizer.json does not contain a usable vocabulary map")
+
+    combined_vocab: Dict[str, int] = {}
+    for token, index in vocab_entries.items():
+        if not isinstance(token, str) or not isinstance(index, int):
+            raise RuntimeError("tokenizer.json contains invalid vocabulary entries")
+        combined_vocab[token] = index
+
+    for token_info in tokenizer_payload.get("added_tokens", []):
+        token = token_info.get("content")
+        index = token_info.get("id")
+        if isinstance(token, str) and isinstance(index, int):
+            combined_vocab[token] = index
+
+    if not combined_vocab:
+        raise RuntimeError("tokenizer.json does not contain any vocabulary entries")
+
+    max_index = max(combined_vocab.values())
+    if max_index < 0:
+        raise RuntimeError("tokenizer vocabulary contains invalid token IDs")
+
+    vocabulary: list[Optional[str]] = [None] * (max_index + 1)
+    for token, index in combined_vocab.items():
+        vocabulary[index] = token
+
+    if any(token is None for token in vocabulary):
+        raise RuntimeError(
+            "tokenizer vocabulary IDs are sparse; cannot synthesize vocabulary"
+        )
+
+    vocabulary_path = snapshot_dir / REPAIRED_VOCABULARY_FILENAME
+    with vocabulary_path.open("w", encoding="utf-8") as handle:
+        json.dump(vocabulary, handle)
+
+    logger.info("Synthesized missing vocabulary file at %s", vocabulary_path)
+    return [REPAIRED_VOCABULARY_FILENAME]
+
+
 def get_model_status(model_size: str, cache_dir: Optional[str] = None) -> Dict:
     """Get detailed model cache status.
 
@@ -101,62 +213,60 @@ def get_model_status(model_size: str, cache_dir: Optional[str] = None) -> Dict:
     Returns:
         Dict with cached status, missing files, and total size.
     """
-    if cache_dir is None:
-        cache_dir = WHISPER_CACHE_DIR
-
-    repo_id = MODEL_REPO_MAP.get(model_size)
+    snapshot_dir, repo_id = _get_model_snapshot_dir(model_size, cache_dir)
     if not repo_id:
         return {"cached": False, "error": "Unknown model"}
 
-    cache_name = f"models--{repo_id.replace('/', '--')}"
-    model_cache_path = Path(cache_dir) / cache_name
-
-    if not model_cache_path.exists():
+    if snapshot_dir is None:
         return {
             "cached": False,
             "repo_id": repo_id,
-            "missing_files": REQUIRED_MODEL_FILES,
+            "missing_files": [
+                _display_pattern_name(pattern) for pattern in REQUIRED_MODEL_PATTERNS
+            ],
+            "optional_missing_files": OPTIONAL_MODEL_FILES.copy(),
+            "repairable_files": [],
         }
 
-    snapshots_dir = model_cache_path / "snapshots"
-    if not snapshots_dir.exists():
-        return {
-            "cached": False,
-            "repo_id": repo_id,
-            "missing_files": REQUIRED_MODEL_FILES,
-        }
+    existing_files: list[str] = []
+    missing_files: list[str] = []
+    optional_missing_files: list[str] = []
+    repairable_files: list[str] = []
+    total_size = 0
 
-    # Check for most recent snapshot
-    snapshot_dirs = sorted(
-        snapshots_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True
-    )
-    for snapshot_dir in snapshot_dirs:
-        if snapshot_dir.is_dir():
-            # Check which files exist
-            existing_files = []
-            missing_files = []
-            total_size = 0
+    for pattern in REQUIRED_MODEL_PATTERNS:
+        matches = _find_matching_snapshot_files(snapshot_dir, pattern)
+        if matches:
+            chosen_file = matches[0]
+            existing_files.append(chosen_file.name)
+            total_size += chosen_file.stat().st_size
+        else:
+            missing_name = _display_pattern_name(pattern)
+            missing_files.append(missing_name)
+            if (
+                pattern == VOCABULARY_PATTERN
+                and (snapshot_dir / "tokenizer.json").exists()
+            ):
+                repairable_files.append(missing_name)
 
-            for filename in REQUIRED_MODEL_FILES:
-                file_path = snapshot_dir / filename
-                if file_path.exists():
-                    existing_files.append(filename)
-                    total_size += file_path.stat().st_size
-                else:
-                    missing_files.append(filename)
+    for filename in OPTIONAL_MODEL_FILES:
+        file_path = snapshot_dir / filename
+        if file_path.exists():
+            existing_files.append(filename)
+            total_size += file_path.stat().st_size
+        else:
+            optional_missing_files.append(filename)
 
-            # Model is cached if model.bin exists (the main file)
-            if "model.bin" in existing_files:
-                return {
-                    "cached": True,
-                    "repo_id": repo_id,
-                    "snapshot_dir": str(snapshot_dir),
-                    "existing_files": existing_files,
-                    "missing_files": missing_files,
-                    "total_size": total_size,
-                }
-
-    return {"cached": False, "repo_id": repo_id, "missing_files": REQUIRED_MODEL_FILES}
+    return {
+        "cached": not missing_files,
+        "repo_id": repo_id,
+        "snapshot_dir": str(snapshot_dir),
+        "existing_files": existing_files,
+        "missing_files": missing_files,
+        "optional_missing_files": optional_missing_files,
+        "repairable_files": repairable_files,
+        "total_size": total_size,
+    }
 
 
 def download_model_files(
@@ -164,7 +274,7 @@ def download_model_files(
     cache_dir: Optional[str] = None,
     progress_callback: Optional[ProgressCallback] = None,
 ) -> str:
-    """Download only required model files with progress tracking.
+    """Download or refresh a Whisper snapshot, then validate and repair it.
 
     Args:
         model_size: Whisper model size.
@@ -174,66 +284,46 @@ def download_model_files(
     Returns:
         Path to the downloaded model directory.
     """
-    if cache_dir is None:
-        cache_dir = WHISPER_CACHE_DIR
-
     repo_id = MODEL_REPO_MAP.get(model_size)
     if not repo_id:
         raise ValueError(f"Unknown model: {model_size}")
 
-    # Get file sizes from HuggingFace
-    fs = HfFileSystem()
-    files_info = {}
-    total_size = 0
+    cache_dir = _ensure_whisper_cache_dir(cache_dir)
 
     if progress_callback:
-        progress_callback("checking", "Checking model files...", 0)
+        progress_callback(
+            "downloading",
+            f"Downloading {model_size} model files...",
+            0.25,
+        )
 
-    for filename in REQUIRED_MODEL_FILES:
-        try:
-            file_info = fs.info(f"{repo_id}/{filename}")
-            files_info[filename] = file_info.get("size", 0)
-            total_size += files_info[filename]
-        except Exception as e:
-            logger.warning(f"Could not get info for {filename}: {e}")
-            files_info[filename] = 0
+    downloaded_path = Path(
+        download_model_snapshot(
+            model_size,
+            cache_dir=cache_dir,
+            local_files_only=False,
+        )
+    )
 
-    # Download each file with progress tracking
-    downloaded_size = 0
-    downloaded_path = None
+    repaired_files = repair_model_snapshot(downloaded_path)
+    if repaired_files and progress_callback:
+        progress_callback(
+            "loading",
+            f"Repairing cached metadata: {', '.join(repaired_files)}",
+            0.8,
+        )
 
-    for _, filename in enumerate(REQUIRED_MODEL_FILES):
-        file_size = files_info.get(filename, 0)
-        file_size_mb = file_size / (1024 * 1024) if file_size else 0
-
-        if progress_callback:
-            overall_progress = downloaded_size / total_size if total_size > 0 else 0
-            progress_callback(
-                "downloading",
-                f"Downloading {filename} ({file_size_mb:.1f} MB)...",
-                overall_progress,
-            )
-
-        try:
-            downloaded_path = hf_hub_download(
-                repo_id=repo_id,
-                filename=filename,
-                cache_dir=cache_dir,
-                local_files_only=False,
-            )
-            downloaded_size += file_size
-            logger.info(f"Downloaded {filename} ({file_size_mb:.1f} MB)")
-        except Exception as e:
-            logger.error(f"Failed to download {filename}: {e}")
-            raise
+    status = get_model_status(model_size, cache_dir)
+    if not status.get("cached"):
+        missing_files = ", ".join(status.get("missing_files", []))
+        raise RuntimeError(
+            f"Model cache is incomplete after refresh. Missing files: {missing_files}"
+        )
 
     if progress_callback:
-        progress_callback("downloading", "Download complete", 1.0)
+        progress_callback("loading", "Model files ready", 0.9)
 
-    # Return the model directory (parent of the downloaded files)
-    if downloaded_path:
-        return str(Path(downloaded_path).parent)
-    return cache_dir
+    return str(downloaded_path)
 
 
 def sanitize_filename(filename: str) -> str:
@@ -274,43 +364,41 @@ def is_model_cached(model_size: str, cache_dir: Optional[str] = None) -> bool:
     Returns:
         True if the model exists in cache with all required files.
     """
-    if cache_dir is None:
-        cache_dir = WHISPER_CACHE_DIR
+    status = get_model_status(model_size, cache_dir)
+    return bool(status.get("cached"))
 
-    # Get the HuggingFace repo ID for this model
-    repo_id = MODEL_REPO_MAP.get(model_size)
-    if not repo_id:
-        # If not in our map, assume it's already a repo ID or local path
-        # In this case, we can't reliably detect cache, so return False
-        # to let faster-whisper handle it
-        logger.debug(f"Model '{model_size}' not in repo map, skipping cache check")
-        return False
 
-    # Convert repo ID to cache directory name (org--model)
-    cache_name = f"models--{repo_id.replace('/', '--')}"
-    model_cache_path = Path(cache_dir) / cache_name
+def ensure_model_files(
+    model_size: str,
+    cache_dir: Optional[str] = None,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> str:
+    """Ensure model files exist locally and return the ready snapshot directory."""
+    cache_dir = _get_whisper_cache_dir(cache_dir)
 
-    if not model_cache_path.exists():
-        logger.debug(f"Cache directory not found: {model_cache_path}")
-        return False
+    if progress_callback:
+        progress_callback("checking", "Checking model cache...", 0.0)
 
-    # Check for snapshots directory with at least one snapshot
-    snapshots_dir = model_cache_path / "snapshots"
-    if not snapshots_dir.exists():
-        logger.debug(f"Snapshots directory not found: {snapshots_dir}")
-        return False
+    status = get_model_status(model_size, cache_dir)
+    snapshot_dir = status.get("snapshot_dir")
+    if status.get("cached") and snapshot_dir:
+        return snapshot_dir
 
-    # Check if there's at least one snapshot with the model.bin file
-    snapshot_dirs = list(snapshots_dir.iterdir()) if snapshots_dir.exists() else []
-    for snapshot_dir in snapshot_dirs:
-        if snapshot_dir.is_dir():
-            model_bin = snapshot_dir / "model.bin"
-            if model_bin.exists():
-                logger.debug(f"Model cache found at: {snapshot_dir}")
-                return True
+    if snapshot_dir and status.get("repairable_files"):
+        if progress_callback:
+            progress_callback("loading", "Repairing cached model metadata...", 0.2)
+        repaired_files = repair_model_snapshot(Path(snapshot_dir))
+        if repaired_files:
+            status = get_model_status(model_size, cache_dir)
+            if status.get("cached") and status.get("snapshot_dir"):
+                return str(status["snapshot_dir"])
 
-    logger.debug(f"No complete snapshot found in: {snapshots_dir}")
-    return False
+    return download_model_files(model_size, cache_dir, progress_callback)
+
+
+def is_model_loaded(model_size: str, device: str) -> bool:
+    """Return whether a model/device pair is already instantiated in memory."""
+    return f"{model_size}_{device}" in model_cache
 
 
 async def get_whisper_model(
@@ -341,43 +429,25 @@ async def get_whisper_model(
                 progress_callback("ready", "Model already loaded", 1.0)
             return model_cache[model_key]
 
-        # Check if model is already cached to avoid network requests
-        use_local_only = is_model_cached(model_size, WHISPER_CACHE_DIR)
-
-        if use_local_only:
-            logger.info(
-                f"Loading Whisper model '{model_size}' on '{device}' "
-                "from local cache (offline mode)"
-            )
-            if progress_callback:
-                progress_callback(
-                    "loading", f"Loading {model_size} on {device}...", 0.5
-                )
-        else:
-            logger.info(
-                f"Downloading Whisper model '{model_size}' on '{device}' "
-                f"to cache dir: {WHISPER_CACHE_DIR}"
-            )
-            # Download files with progress tracking
-            if progress_callback:
-                progress_callback("downloading", f"Downloading {model_size}...", 0)
-            await asyncio.to_thread(
-                download_model_files, model_size, WHISPER_CACHE_DIR, progress_callback
-            )
-            if progress_callback:
-                progress_callback(
-                    "loading", f"Loading {model_size} on {device}...", 0.9
-                )
+        model_path = await asyncio.to_thread(
+            ensure_model_files, model_size, None, progress_callback
+        )
+        logger.info(
+            "Loading Whisper model '%s' on '%s' from %s",
+            model_size,
+            device,
+            model_path,
+        )
+        if progress_callback:
+            progress_callback("loading", f"Loading {model_size} on {device}...", 0.95)
 
         compute_type = "int8" if device == "cpu" else "int8_float16"
 
         model = await asyncio.to_thread(
             WhisperModel,
-            model_size,
+            model_path,
             device=device,
             compute_type=compute_type,
-            download_root=WHISPER_CACHE_DIR,
-            local_files_only=True,  # Files are now guaranteed to be downloaded
         )
 
         model_cache[model_key] = model
@@ -409,26 +479,19 @@ def get_whisper_model_sync(model_size: str, device: str) -> WhisperModel:
         if model_key in model_cache:
             return model_cache[model_key]
 
-        # Check if model is already cached to avoid network requests
-        use_local_only = is_model_cached(model_size, WHISPER_CACHE_DIR)
-        if use_local_only:
-            logger.info(
-                f"Loading Whisper model '{model_size}' on '{device}' "
-                "from local cache (offline mode)"
-            )
-        else:
-            logger.info(
-                f"Downloading Whisper model '{model_size}' on '{device}' "
-                f"to cache dir: {WHISPER_CACHE_DIR}"
-            )
+        model_path = ensure_model_files(model_size)
+        logger.info(
+            "Loading Whisper model '%s' on '%s' from %s",
+            model_size,
+            device,
+            model_path,
+        )
 
         compute_type = "int8" if device == "cpu" else "int8_float16"
         model = WhisperModel(
-            model_size,
+            model_path,
             device=device,
             compute_type=compute_type,
-            download_root=WHISPER_CACHE_DIR,
-            local_files_only=use_local_only,
         )
         model_cache[model_key] = model
         logger.info(f"Whisper model '{model_key}' loaded and cached.")

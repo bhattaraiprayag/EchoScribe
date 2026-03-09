@@ -273,6 +273,13 @@ The Docker setup uses volumes for persistent storage:
 
 - `models_cache`: Stores downloaded Whisper models (prevents re-download)
 
+On container startup, the entrypoint ensures the mounted `models_cache` directory is
+owned by the non-root application user so Docker bind mounts do not block model
+downloads or cache repair.
+
+The `make docker-run` target reuses the same tagged image as `make docker-build`
+(`echoscribe:test` by default) before starting the Compose stack.
+
 ### 🧪 Running Tests
 
 To ensure everything is working correctly, run the test and quality checks from the repository root:
@@ -286,6 +293,8 @@ make test                                 # Full pytest suite
 make coverage                             # Coverage report + fail-under gate
 make smoke                                # Startup smoke test (backend.main:app)
 make docker-build                         # Docker image build verification
+make docker-run                           # Build and start the Docker stack
+make docker-up                            # Alias for docker-run
 make clean                                # Safely remove pycache/test/build artifacts
 ```
 

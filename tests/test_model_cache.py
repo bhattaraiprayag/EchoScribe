@@ -1,8 +1,13 @@
 # tests/test_model_cache.py
-"""Tests for model cache concurrency safety."""
+"""Tests for Whisper model cache validation, repair, and locking."""
 
 import asyncio
+import json
+import os
+import subprocess
+import sys
 import tempfile
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,67 +16,102 @@ import pytest
 pytestmark = pytest.mark.asyncio
 
 
-class TestIsModelCached:
-    """Tests for is_model_cached function."""
+def _create_snapshot(
+    root: Path,
+    model_cache_name: str,
+    *,
+    include_config: bool = True,
+    include_model_bin: bool = True,
+    include_tokenizer: bool = True,
+    include_vocabulary: bool = True,
+) -> Path:
+    """Create a minimal cache snapshot for tests."""
+    snapshot_dir = root / model_cache_name / "snapshots" / "abc123"
+    snapshot_dir.mkdir(parents=True)
 
-    def test_cached_model_returns_true(self):
-        """is_model_cached should return True when model exists with model.bin."""
+    if include_config:
+        (snapshot_dir / "config.json").write_text("{}", encoding="utf-8")
+    if include_model_bin:
+        (snapshot_dir / "model.bin").write_bytes(b"model")
+    if include_tokenizer:
+        tokenizer_payload = {
+            "model": {"vocab": {"a": 0, "b": 1}},
+            "added_tokens": [{"id": 2, "content": "<|endoftext|>"}],
+        }
+        (snapshot_dir / "tokenizer.json").write_text(
+            json.dumps(tokenizer_payload), encoding="utf-8"
+        )
+    if include_vocabulary:
+        (snapshot_dir / "vocabulary.json").write_text(
+            json.dumps(["a", "b", "<|endoftext|>"]),
+            encoding="utf-8",
+        )
+
+    return snapshot_dir
+
+
+class TestIsModelCached:
+    """Tests for cache validation."""
+
+    def test_complete_model_returns_true(self):
+        """A model is cached only when all required load files exist."""
         from backend.utils import is_model_cached
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create proper cache structure for distil-large-v3
-            model_dir = Path(tmpdir) / "models--Systran--faster-distil-whisper-large-v3"
-            snapshot_dir = model_dir / "snapshots" / "abc123"
-            snapshot_dir.mkdir(parents=True)
-            (snapshot_dir / "model.bin").touch()
-
-            result = is_model_cached("distil-large-v3", tmpdir)
-            assert result is True
+            _create_snapshot(
+                Path(tmpdir), "models--Systran--faster-distil-whisper-large-v3"
+            )
+            assert is_model_cached("distil-large-v3", tmpdir) is True
 
     def test_missing_model_returns_false(self):
-        """is_model_cached should return False when model directory doesn't exist."""
+        """Missing cache roots should not be treated as cached."""
         from backend.utils import is_model_cached
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = is_model_cached("distil-large-v3", tmpdir)
-            assert result is False
+            assert is_model_cached("distil-large-v3", tmpdir) is False
 
     def test_missing_snapshot_returns_false(self):
-        """is_model_cached should return False when snapshots directory is missing."""
+        """Missing snapshot directories should not be treated as cached."""
         from backend.utils import is_model_cached
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create model dir but no snapshots
             model_dir = Path(tmpdir) / "models--Systran--faster-distil-whisper-large-v3"
             model_dir.mkdir(parents=True)
-
-            result = is_model_cached("distil-large-v3", tmpdir)
-            assert result is False
+            assert is_model_cached("distil-large-v3", tmpdir) is False
 
     def test_missing_model_bin_returns_false(self):
-        """is_model_cached should return False when model.bin is missing."""
+        """Snapshots without model.bin are incomplete."""
         from backend.utils import is_model_cached
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create snapshot dir but no model.bin
-            model_dir = Path(tmpdir) / "models--Systran--faster-distil-whisper-large-v3"
-            snapshot_dir = model_dir / "snapshots" / "abc123"
-            snapshot_dir.mkdir(parents=True)
-            # Don't create model.bin
+            _create_snapshot(
+                Path(tmpdir),
+                "models--Systran--faster-distil-whisper-large-v3",
+                include_model_bin=False,
+            )
+            assert is_model_cached("distil-large-v3", tmpdir) is False
 
-            result = is_model_cached("distil-large-v3", tmpdir)
-            assert result is False
+    def test_missing_vocabulary_returns_false(self):
+        """Snapshots without vocabulary are not load-ready."""
+        from backend.utils import is_model_cached
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_snapshot(
+                Path(tmpdir),
+                "models--Systran--faster-whisper-tiny",
+                include_vocabulary=False,
+            )
+            assert is_model_cached("tiny", tmpdir) is False
 
     def test_unknown_model_returns_false(self):
-        """is_model_cached should return False for models not in repo map."""
+        """Unknown models should not be treated as cached."""
         from backend.utils import is_model_cached
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = is_model_cached("unknown-model", tmpdir)
-            assert result is False
+            assert is_model_cached("unknown-model", tmpdir) is False
 
     def test_all_standard_models_have_mapping(self):
-        """All standard Whisper model sizes should have repo mappings."""
+        """All exposed models should be mapped to Hugging Face repos."""
         from backend.utils import MODEL_REPO_MAP
 
         standard_models = [
@@ -88,66 +128,181 @@ class TestIsModelCached:
             )
 
 
+class TestRepairModelSnapshot:
+    """Tests for offline vocabulary repair."""
+
+    def test_repair_creates_vocabulary_json_from_tokenizer(self):
+        """repair_model_snapshot should synthesize vocabulary.json."""
+        from backend.utils import repair_model_snapshot
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot_dir = _create_snapshot(
+                Path(tmpdir),
+                "models--Systran--faster-whisper-tiny",
+                include_vocabulary=False,
+            )
+
+            repaired_files = repair_model_snapshot(snapshot_dir)
+
+            assert repaired_files == ["vocabulary.json"]
+            vocab_payload = json.loads(
+                (snapshot_dir / "vocabulary.json").read_text(encoding="utf-8")
+            )
+            assert vocab_payload == ["a", "b", "<|endoftext|>"]
+
+    def test_repair_returns_empty_when_vocabulary_already_exists(self):
+        """Existing vocabulary files should not be rewritten."""
+        from backend.utils import repair_model_snapshot
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot_dir = _create_snapshot(
+                Path(tmpdir), "models--Systran--faster-whisper-tiny"
+            )
+
+            assert repair_model_snapshot(snapshot_dir) == []
+
+
+class TestGetModelStatus:
+    """Tests for detailed cache status reporting."""
+
+    def test_get_model_status_cached_model(self):
+        """Complete snapshots should report cached=True."""
+        from backend.utils import get_model_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_snapshot(Path(tmpdir), "models--Systran--faster-whisper-tiny")
+
+            status = get_model_status("tiny", tmpdir)
+
+            assert status["cached"] is True
+            assert "model.bin" in status["existing_files"]
+            assert "vocabulary.json" in status["existing_files"]
+            assert "repo_id" in status
+
+    def test_get_model_status_missing_model(self):
+        """Missing snapshots should report required missing files."""
+        from backend.utils import get_model_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status = get_model_status("tiny", tmpdir)
+
+            assert status["cached"] is False
+            assert "missing_files" in status
+            assert "vocabulary.json" in status["missing_files"]
+
+    def test_get_model_status_unknown_model(self):
+        """Unknown models should report a descriptive error."""
+        from backend.utils import get_model_status
+
+        status = get_model_status("unknown-model-xyz")
+        assert status["cached"] is False
+        assert "error" in status
+
+    def test_get_model_status_returns_repo_id(self):
+        """Known models should include their repo mapping."""
+        from backend.utils import MODEL_REPO_MAP, get_model_status
+
+        status = get_model_status("base")
+        assert status["repo_id"] == MODEL_REPO_MAP["base"]
+
+    def test_get_model_status_partial_cache_is_not_ready(self):
+        """Partial snapshots should report cached=False and repair hints."""
+        from backend.utils import get_model_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_snapshot(
+                Path(tmpdir),
+                "models--Systran--faster-whisper-small",
+                include_vocabulary=False,
+            )
+
+            status = get_model_status("small", tmpdir)
+
+            assert status["cached"] is False
+            assert "vocabulary.json" in status["missing_files"]
+            assert "vocabulary.json" in status["repairable_files"]
+
+
+class TestModelCacheModuleImport:
+    """Regression coverage for cache-directory setup during import."""
+
+    def test_import_does_not_create_default_cache_dirs(self):
+        """Importing backend.utils should not eagerly create cache directories."""
+        repo_root = Path(__file__).resolve().parent.parent
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(repo_root)
+        import_code = """
+import pathlib
+
+def fail_mkdir(self, *args, **kwargs):
+    raise RuntimeError("mkdir called during import")
+
+pathlib.Path.mkdir = fail_mkdir
+import backend.utils
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", import_code],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+
+
 class TestModelCacheLocking:
-    """Tests for model cache thread safety."""
+    """Tests for asynchronous model loading and caching."""
 
     async def test_get_whisper_model_returns_model(self):
-        """get_whisper_model should return a WhisperModel instance."""
+        """get_whisper_model should return the loaded WhisperModel instance."""
         from backend.utils import get_whisper_model, model_cache
 
-        # Clear cache
         model_cache.clear()
-
-        # Mock WhisperModel, is_model_cached, and download_model_files
         mock_model = MagicMock()
+
         with (
+            patch("backend.utils.ensure_model_files", return_value="/mock/path"),
             patch("backend.utils.WhisperModel", return_value=mock_model),
-            patch("backend.utils.is_model_cached", return_value=False),
-            patch("backend.utils.download_model_files", return_value="/mock/path"),
         ):
             result = await get_whisper_model("tiny", "cpu")
-            assert result == mock_model
+            assert result is mock_model
 
     async def test_get_whisper_model_caches_result(self):
-        """Second call should return cached model, not load again."""
+        """Repeated requests for the same model/device should reuse the instance."""
         from backend.utils import get_whisper_model, model_cache
 
         model_cache.clear()
-
         mock_model = MagicMock()
+
         with (
+            patch("backend.utils.ensure_model_files", return_value="/mock/path"),
             patch("backend.utils.WhisperModel", return_value=mock_model) as mock_class,
-            patch("backend.utils.is_model_cached", return_value=False),
-            patch("backend.utils.download_model_files", return_value="/mock/path"),
         ):
-            # First call
             result1 = await get_whisper_model("tiny", "cpu")
-            # Second call
             result2 = await get_whisper_model("tiny", "cpu")
 
-            # Should only load once
             assert mock_class.call_count == 1
             assert result1 is result2
 
     async def test_different_models_cached_separately(self):
-        """Different model sizes should be cached separately."""
+        """Different model keys should keep separate cached model instances."""
         from backend.utils import get_whisper_model, model_cache
 
         model_cache.clear()
-
         mock_model_tiny = MagicMock(name="tiny")
         mock_model_base = MagicMock(name="base")
 
-        def create_model(model_size, **kwargs):
-            if model_size == "tiny":
-                return mock_model_tiny
-            else:
-                return mock_model_base
+        def create_model(model_path, **kwargs):
+            return mock_model_tiny if model_path == "/mock/tiny" else mock_model_base
 
         with (
+            patch(
+                "backend.utils.ensure_model_files",
+                side_effect=["/mock/tiny", "/mock/base"],
+            ),
             patch("backend.utils.WhisperModel", side_effect=create_model),
-            patch("backend.utils.is_model_cached", return_value=False),
-            patch("backend.utils.download_model_files", return_value="/mock/path"),
         ):
             result_tiny = await get_whisper_model("tiny", "cpu")
             result_base = await get_whisper_model("base", "cpu")
@@ -157,38 +312,29 @@ class TestModelCacheLocking:
             assert "base_cpu" in model_cache
 
     async def test_concurrent_requests_load_model_once(self):
-        """Multiple concurrent requests for same model should only load once."""
+        """Concurrent loads of the same model should instantiate WhisperModel once."""
         from backend.utils import get_whisper_model, model_cache
 
         model_cache.clear()
-
         load_count = 0
-        load_started = asyncio.Event()
 
         def slow_load(*args, **kwargs):
             nonlocal load_count
             load_count += 1
-            load_started.set()
             return MagicMock()
 
         with (
+            patch("backend.utils.ensure_model_files", return_value="/mock/path"),
             patch("backend.utils.WhisperModel", side_effect=slow_load),
-            patch("backend.utils.is_model_cached", return_value=False),
-            patch("backend.utils.download_model_files", return_value="/mock/path"),
         ):
-            # Start multiple concurrent requests
-            tasks = [
+            results = await asyncio.gather(
                 get_whisper_model("tiny", "cpu"),
                 get_whisper_model("tiny", "cpu"),
                 get_whisper_model("tiny", "cpu"),
-            ]
-            results = await asyncio.gather(*tasks)
+            )
 
-            # All results should be the same model
             assert results[0] is results[1]
             assert results[1] is results[2]
-
-            # Model should only be loaded once
             assert load_count == 1
 
     async def test_model_cache_lock_exists(self):
@@ -198,186 +344,69 @@ class TestModelCacheLocking:
         assert isinstance(model_cache_lock, asyncio.Lock)
 
     async def test_get_whisper_model_uses_correct_compute_type(self):
-        """CPU should use int8, CUDA should use int8_float16."""
+        """CPU and CUDA should select the expected compute types."""
         from backend.utils import get_whisper_model, model_cache
 
         model_cache.clear()
 
         with (
+            patch("backend.utils.ensure_model_files", return_value="/mock/path"),
             patch("backend.utils.WhisperModel") as mock_class,
-            patch("backend.utils.is_model_cached", return_value=False),
-            patch("backend.utils.download_model_files", return_value="/mock/path"),
         ):
             mock_class.return_value = MagicMock()
-
-            # Test CPU compute type
             await get_whisper_model("tiny", "cpu")
-            call_kwargs = mock_class.call_args
-            assert call_kwargs.kwargs.get("compute_type") == "int8"
+            assert mock_class.call_args.kwargs["compute_type"] == "int8"
 
         model_cache.clear()
 
         with (
+            patch("backend.utils.ensure_model_files", return_value="/mock/path"),
             patch("backend.utils.WhisperModel") as mock_class,
-            patch("backend.utils.is_model_cached", return_value=False),
-            patch("backend.utils.download_model_files", return_value="/mock/path"),
         ):
             mock_class.return_value = MagicMock()
-
-            # Test CUDA compute type
             await get_whisper_model("tiny", "cuda")
-            call_kwargs = mock_class.call_args
-            assert call_kwargs.kwargs.get("compute_type") == "int8_float16"
+            assert mock_class.call_args.kwargs["compute_type"] == "int8_float16"
 
-    async def test_get_whisper_model_uses_local_files_only_when_cached(self):
-        """When model is cached, local_files_only should be True."""
+    async def test_get_whisper_model_uses_prepared_snapshot_path(self):
+        """Prepared snapshot paths should be passed to WhisperModel."""
         from backend.utils import get_whisper_model, model_cache
 
         model_cache.clear()
 
         with (
+            patch("backend.utils.ensure_model_files", return_value="/mock/path"),
             patch("backend.utils.WhisperModel") as mock_class,
-            patch("backend.utils.is_model_cached", return_value=True),
         ):
             mock_class.return_value = MagicMock()
-
-            await get_whisper_model("tiny", "cpu")
-            call_kwargs = mock_class.call_args
-            assert call_kwargs.kwargs.get("local_files_only") is True
-
-    async def test_get_whisper_model_downloads_when_not_cached(self):
-        """When model is not cached, download_model_files is called first,
-        then local_files_only=True."""
-        from backend.utils import get_whisper_model, model_cache
-
-        model_cache.clear()
-
-        with (
-            patch("backend.utils.WhisperModel") as mock_class,
-            patch("backend.utils.is_model_cached", return_value=False),
-            patch(
-                "backend.utils.download_model_files", return_value="/mock/path"
-            ) as mock_download,
-        ):
-            mock_class.return_value = MagicMock()
-
             await get_whisper_model("tiny", "cpu")
 
-            # download_model_files should be called when not cached
-            mock_download.assert_called_once()
-
-            # After download, local_files_only should be True
-            call_kwargs = mock_class.call_args
-            assert call_kwargs.kwargs.get("local_files_only") is True
-
-
-class TestGetModelStatus:
-    """Tests for get_model_status function."""
-
-    def test_get_model_status_cached_model(self):
-        """get_model_status should return cached=True when model exists."""
-        from backend.utils import get_model_status
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Create proper cache structure
-            model_dir = Path(tmpdir) / "models--Systran--faster-whisper-tiny"
-            snapshot_dir = model_dir / "snapshots" / "abc123"
-            snapshot_dir.mkdir(parents=True)
-            (snapshot_dir / "model.bin").touch()
-            (snapshot_dir / "config.json").touch()
-            (snapshot_dir / "tokenizer.json").touch()
-
-            status = get_model_status("tiny", tmpdir)
-            assert status["cached"] is True
-            assert "model.bin" in status["existing_files"]
-            assert "repo_id" in status
-
-    def test_get_model_status_missing_model(self):
-        """get_model_status should return cached=False when model doesn't exist."""
-        from backend.utils import get_model_status
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            status = get_model_status("tiny", tmpdir)
-            assert status["cached"] is False
-            assert "missing_files" in status
-
-    def test_get_model_status_unknown_model(self):
-        """get_model_status should return error for unknown model."""
-        from backend.utils import get_model_status
-
-        status = get_model_status("unknown-model-xyz")
-        assert status["cached"] is False
-        assert "error" in status
-
-    def test_get_model_status_returns_repo_id(self):
-        """get_model_status should include repo_id in response."""
-        from backend.utils import MODEL_REPO_MAP, get_model_status
-
-        status = get_model_status("base")
-        assert "repo_id" in status
-        assert status["repo_id"] == MODEL_REPO_MAP["base"]
-
-    def test_get_model_status_partial_cache(self):
-        """get_model_status should report missing files correctly."""
-        from backend.utils import get_model_status
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Create cache with only some files
-            model_dir = Path(tmpdir) / "models--Systran--faster-whisper-small"
-            snapshot_dir = model_dir / "snapshots" / "abc123"
-            snapshot_dir.mkdir(parents=True)
-            (snapshot_dir / "model.bin").touch()
-            # Only model.bin, missing other files
-
-            status = get_model_status("small", tmpdir)
-            assert status["cached"] is True  # model.bin exists
-            assert len(status["missing_files"]) > 0
-            assert "tokenizer.json" in status["missing_files"]
-
-
-class TestRequiredModelFiles:
-    """Tests for REQUIRED_MODEL_FILES constant."""
-
-    def test_required_files_exist(self):
-        """REQUIRED_MODEL_FILES should be defined and non-empty."""
-        from backend.utils import REQUIRED_MODEL_FILES
-
-        assert REQUIRED_MODEL_FILES is not None
-        assert isinstance(REQUIRED_MODEL_FILES, list)
-        assert len(REQUIRED_MODEL_FILES) > 0
-
-    def test_required_files_contain_essential_files(self):
-        """REQUIRED_MODEL_FILES should contain model.bin and config.json."""
-        from backend.utils import REQUIRED_MODEL_FILES
-
-        assert "model.bin" in REQUIRED_MODEL_FILES
-        assert "config.json" in REQUIRED_MODEL_FILES
-        assert "tokenizer.json" in REQUIRED_MODEL_FILES
+            assert mock_class.call_args.args[0] == "/mock/path"
 
 
 class TestDownloadModelFiles:
-    """Tests for download_model_files function."""
+    """Tests for download_model_files."""
 
-    def test_download_model_files_calls_hf_hub_download(self):
-        """download_model_files should call hf_hub_download for each required file."""
-        from backend.utils import REQUIRED_MODEL_FILES, download_model_files
+    def test_download_model_files_calls_snapshot_download(self):
+        """download_model_files should delegate to faster-whisper snapshot download."""
+        from backend.utils import download_model_files
 
         with (
-            patch("backend.utils.hf_hub_download") as mock_download,
-            patch("backend.utils.HfFileSystem") as mock_fs,
+            patch(
+                "backend.utils.download_model_snapshot",
+                return_value="/mock/cache/snapshots/abc123",
+            ) as mock_download,
+            patch("backend.utils.repair_model_snapshot", return_value=[]),
+            patch("backend.utils.get_model_status", return_value={"cached": True}),
         ):
-            mock_download.return_value = "/mock/path/model.bin"
-            mock_fs_instance = MagicMock()
-            mock_fs_instance.info.return_value = {"size": 1000}
-            mock_fs.return_value = mock_fs_instance
+            result = download_model_files("tiny", "/tmp/cache")
 
-            download_model_files("tiny", "/tmp/cache")
-
-            # Should be called for each required file
-            assert mock_download.call_count == len(REQUIRED_MODEL_FILES)
+            mock_download.assert_called_once_with(
+                "tiny", cache_dir="/tmp/cache", local_files_only=False
+            )
+            assert result == "/mock/cache/snapshots/abc123"
 
     def test_download_model_files_progress_callback(self):
-        """download_model_files should call progress callback."""
+        """download_model_files should emit progress updates when provided."""
         from backend.utils import download_model_files
 
         progress_calls = []
@@ -386,62 +415,63 @@ class TestDownloadModelFiles:
             progress_calls.append((status, message, progress))
 
         with (
-            patch("backend.utils.hf_hub_download") as mock_download,
-            patch("backend.utils.HfFileSystem") as mock_fs,
+            patch(
+                "backend.utils.download_model_snapshot",
+                return_value="/mock/cache/snapshots/abc123",
+            ),
+            patch(
+                "backend.utils.repair_model_snapshot",
+                return_value=["vocabulary.json"],
+            ),
+            patch("backend.utils.get_model_status", return_value={"cached": True}),
         ):
-            mock_download.return_value = "/mock/path/file"
-            mock_fs_instance = MagicMock()
-            mock_fs_instance.info.return_value = {"size": 1000}
-            mock_fs.return_value = mock_fs_instance
-
             download_model_files("tiny", "/tmp/cache", callback)
 
-            # Progress callback should have been called
-            assert len(progress_calls) > 0
-            # Should have a "checking" status at start
-            assert any(call[0] == "checking" for call in progress_calls)
+            assert any(call[0] == "downloading" for call in progress_calls)
+            assert any(call[0] == "loading" for call in progress_calls)
 
     def test_download_model_files_unknown_model_raises(self):
-        """download_model_files should raise ValueError for unknown model."""
+        """Unknown model names should raise ValueError."""
         from backend.utils import download_model_files
 
         with pytest.raises(ValueError, match="Unknown model"):
             download_model_files("nonexistent-model-xyz")
 
-    def test_download_model_files_returns_path(self):
-        """download_model_files should return the model directory path."""
+    def test_download_model_files_incomplete_cache_raises(self):
+        """download_model_files should fail on incomplete refreshed caches."""
         from backend.utils import download_model_files
 
         with (
-            patch("backend.utils.hf_hub_download") as mock_download,
-            patch("backend.utils.HfFileSystem") as mock_fs,
+            patch(
+                "backend.utils.download_model_snapshot",
+                return_value="/mock/cache/snapshots/abc123",
+            ),
+            patch("backend.utils.repair_model_snapshot", return_value=[]),
+            patch(
+                "backend.utils.get_model_status",
+                return_value={
+                    "cached": False,
+                    "missing_files": ["vocabulary.json"],
+                },
+            ),
         ):
-            mock_download.return_value = "/cache/models/snapshots/abc/model.bin"
-            mock_fs_instance = MagicMock()
-            mock_fs_instance.info.return_value = {"size": 1000}
-            mock_fs.return_value = mock_fs_instance
-
-            result = download_model_files("tiny", "/tmp/cache")
-
-            assert result is not None
-            assert isinstance(result, str)
+            with pytest.raises(
+                RuntimeError, match="Model cache is incomplete after refresh"
+            ):
+                download_model_files("tiny", "/tmp/cache")
 
 
 class TestSyncModelCacheLocking:
-    """Tests for synchronous model cache thread safety."""
+    """Tests for synchronous model loading."""
 
     def test_sync_model_cache_lock_exists(self):
         """sync_model_cache_lock should be a threading.Lock."""
-        import threading
-
         from backend.utils import sync_model_cache_lock
 
         assert isinstance(sync_model_cache_lock, type(threading.Lock()))
 
     def test_get_whisper_model_sync_uses_lock(self):
-        """get_whisper_model_sync should use lock to prevent race conditions."""
-        import threading
-
+        """Synchronous loads should only instantiate once across threads."""
         from backend.utils import get_whisper_model_sync, model_cache
 
         model_cache.clear()
@@ -452,17 +482,12 @@ class TestSyncModelCacheLocking:
             nonlocal load_count
             with load_count_lock:
                 load_count += 1
-            # Simulate slow loading
-            import time
-
-            time.sleep(0.1)
             return MagicMock()
 
         with (
+            patch("backend.utils.ensure_model_files", return_value="/mock/path"),
             patch("backend.utils.WhisperModel", side_effect=slow_load),
-            patch("backend.utils.is_model_cached", return_value=True),
         ):
-            # Start multiple concurrent threads
             threads = []
             results = []
             results_lock = threading.Lock()
@@ -473,17 +498,14 @@ class TestSyncModelCacheLocking:
                     results.append(result)
 
             for _ in range(3):
-                t = threading.Thread(target=load_model)
-                threads.append(t)
-                t.start()
+                thread = threading.Thread(target=load_model)
+                threads.append(thread)
+                thread.start()
 
-            for t in threads:
-                t.join()
+            for thread in threads:
+                thread.join()
 
-            # Model should only be loaded once due to locking
             assert load_count == 1
-
-            # All results should be the same model instance
             assert len(results) == 3
             assert results[0] is results[1]
             assert results[1] is results[2]
@@ -492,10 +514,10 @@ class TestSyncModelCacheLocking:
 
 
 class TestProgressCallback:
-    """Tests for progress callback functionality in model loading."""
+    """Tests for status callbacks and model-loaded checks."""
 
     async def test_get_whisper_model_calls_progress_callback(self):
-        """get_whisper_model should call progress callback during loading."""
+        """get_whisper_model should emit progress updates while loading."""
         from backend.utils import get_whisper_model, model_cache
 
         model_cache.clear()
@@ -505,45 +527,21 @@ class TestProgressCallback:
             progress_calls.append((status, message, progress))
 
         with (
-            patch("backend.utils.WhisperModel") as mock_class,
-            patch("backend.utils.is_model_cached", return_value=True),
+            patch("backend.utils.ensure_model_files", return_value="/mock/path"),
+            patch("backend.utils.WhisperModel", return_value=MagicMock()),
         ):
-            mock_class.return_value = MagicMock()
-
             await get_whisper_model("tiny", "cpu", callback)
 
-            # Should have progress calls
             assert len(progress_calls) > 0
-
-    async def test_get_whisper_model_sends_ready_status(self):
-        """get_whisper_model should send 'ready' status when done."""
-        from backend.utils import get_whisper_model, model_cache
-
-        model_cache.clear()
-        progress_calls = []
-
-        def callback(status, message, progress):
-            progress_calls.append((status, message, progress))
-
-        with (
-            patch("backend.utils.WhisperModel") as mock_class,
-            patch("backend.utils.is_model_cached", return_value=True),
-        ):
-            mock_class.return_value = MagicMock()
-
-            await get_whisper_model("tiny", "cpu", callback)
-
-            # Should have a "ready" status at the end
+            assert any(call[0] == "loading" for call in progress_calls)
             assert any(call[0] == "ready" for call in progress_calls)
 
     async def test_get_whisper_model_cached_returns_immediately(self):
-        """get_whisper_model should return immediately if model is in cache."""
+        """In-memory cache hits should still emit a ready callback."""
         from backend.utils import get_whisper_model, model_cache
 
-        # Pre-populate cache
         mock_model = MagicMock()
         model_cache["tiny_cpu"] = mock_model
-
         progress_calls = []
 
         def callback(status, message, progress):
@@ -552,8 +550,15 @@ class TestProgressCallback:
         result = await get_whisper_model("tiny", "cpu", callback)
 
         assert result is mock_model
-        # Should still call callback with ready status
         assert any(call[0] == "ready" for call in progress_calls)
 
-        # Clean up
+        model_cache.clear()
+
+    def test_is_model_loaded_returns_true_for_loaded_model(self):
+        """is_model_loaded should reflect the in-memory model cache."""
+        from backend.utils import is_model_loaded, model_cache
+
+        model_cache["tiny_cpu"] = MagicMock()
+        assert is_model_loaded("tiny", "cpu") is True
+        assert is_model_loaded("tiny", "cuda") is False
         model_cache.clear()

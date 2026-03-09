@@ -25,7 +25,7 @@ COPY pyproject.toml uv.lock /app/
 # `--no-sources` avoids requiring custom source indexes during container builds.
 # This layer rebuilds whenever uv.lock or pyproject.toml changes.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-sources --no-install-project --no-editable
+    uv sync --no-install-project --no-editable
 
 # Stage 2: Runtime
 FROM python:3.11-slim
@@ -33,6 +33,7 @@ FROM python:3.11-slim
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user
@@ -49,20 +50,22 @@ WORKDIR /app
 # Copy application code
 COPY backend/ /app/backend/
 COPY frontend/ /app/frontend/
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 # Create models_cache directory and set permissions
 RUN mkdir -p /app/models_cache && \
+    chmod +x /usr/local/bin/docker-entrypoint.sh && \
     chown -R appuser:appuser /app
 
 # Expose port
 EXPOSE 8000
 
-# Switch to non-root user
-USER appuser
-
 # Health check (httpx is installed in the main group)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import httpx; httpx.get('http://localhost:8000/api/config', timeout=5)" || exit 1
+
+# Fix mounted-volume ownership before launching the non-root app process
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # Run the application
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

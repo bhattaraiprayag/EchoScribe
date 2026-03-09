@@ -64,7 +64,7 @@ from backend.utils import (
     get_model_status,
     get_whisper_model,
     get_whisper_model_sync,
-    is_model_cached,
+    is_model_loaded,
     is_valid_audio_extension,
     sanitize_filename,
 )
@@ -106,6 +106,20 @@ def _error_envelope(code: str, message: str, correlation_id: str) -> Dict[str, A
             "correlation_id": correlation_id,
         }
     }
+
+
+def _model_not_loaded_response(
+    model: str, device: str, correlation_id: str, context: str
+) -> JSONResponse:
+    """Build a consistent response when work is attempted before model load."""
+    return JSONResponse(
+        content=_error_envelope(
+            code="MODEL_NOT_LOADED",
+            message=f"Load the {model} model on {device} before {context}.",
+            correlation_id=correlation_id,
+        ),
+        status_code=409,
+    )
 
 
 async def cleanup_background_task() -> None:
@@ -391,6 +405,18 @@ async def transcribe_file(
             ),
         )
 
+    if not is_model_loaded(model, device):
+        correlation_id = str(uuid.uuid4())
+        logger.warning(
+            "[%s] File transcription rejected because model %s on %s is not loaded",
+            correlation_id,
+            model,
+            device,
+        )
+        return _model_not_loaded_response(
+            model, device, correlation_id, "starting batch transcription"
+        )
+
     job_id = str(uuid.uuid4())
     transcription_jobs[job_id] = JobInfo(job_id=job_id, status="processing")
     safe_filename = sanitize_filename(filename)
@@ -593,6 +619,63 @@ def check_model_status(model: str, device: str = "cpu") -> JSONResponse:
     status = get_model_status(model)
     status["device"] = device
     status["model"] = model
+    status["loaded"] = is_model_loaded(model, device)
+    return JSONResponse(content=status)
+
+
+@app.post("/api/model/load")
+async def load_model(
+    request: Request,
+    model: str = Form("base"),
+    device: str = Form("cpu"),
+    _: str = Depends(api_key_auth),
+) -> JSONResponse:
+    """Explicitly load a model on a device before recording or batch work."""
+    api_rate_limiter.check_rate_limit(request)
+
+    try:
+        await get_whisper_model(model, device)
+    except ValueError as exc:
+        correlation_id = str(uuid.uuid4())
+        logger.warning(
+            "[%s] Invalid model load request for %s on %s: %s",
+            correlation_id,
+            model,
+            device,
+            exc,
+        )
+        return JSONResponse(
+            content=_error_envelope(
+                code="MODEL_LOAD_INVALID",
+                message=str(exc),
+                correlation_id=correlation_id,
+            ),
+            status_code=400,
+        )
+    except Exception as exc:
+        correlation_id = str(uuid.uuid4())
+        logger.error(
+            "[%s] Failed to load model %s on %s: %s",
+            correlation_id,
+            model,
+            device,
+            exc,
+            exc_info=True,
+        )
+        return JSONResponse(
+            content=_error_envelope(
+                code="MODEL_LOAD_ERROR",
+                message=str(exc),
+                correlation_id=correlation_id,
+            ),
+            status_code=500,
+        )
+
+    status = get_model_status(model)
+    status["device"] = device
+    status["model"] = model
+    status["loaded"] = is_model_loaded(model, device)
+    status["message"] = f"Model {model} loaded on {device}."
     return JSONResponse(content=status)
 
 
@@ -642,7 +725,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     session = None
     session_info = None
 
-    # Create async-safe progress callback for WebSocket status updates
     async def send_status(status: str, message: str, progress: float):
         """Send status update over WebSocket."""
         try:
@@ -656,19 +738,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             )
         except Exception as e:
             logger.warning(f"[{session_id}] Failed to send status: {e}")
-
-    # Sync wrapper for progress callback (called from sync download code)
-    def progress_callback(status: str, message: str, progress: float):
-        """Sync wrapper to schedule async status send."""
-        try:
-            # Use asyncio.run_coroutine_threadsafe for thread-safe async call
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    send_status(status, message, progress), loop
-                )
-        except Exception as e:
-            logger.warning(f"[{session_id}] Progress callback error: {e}")
 
     try:
         client_config = await websocket.receive_json()
@@ -691,16 +760,16 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         model_size = client_config.get("model", "tiny")
         device = client_config.get("device", "cpu")
 
-        # Check if model is cached and send appropriate initial status
-        if is_model_cached(model_size):
-            await send_status("loading", f"Loading {model_size} on {device}...", 0.3)
-        else:
+        if not is_model_loaded(model_size, device):
             await send_status(
-                "downloading", f"Model not found. Downloading {model_size}...", 0
+                "error",
+                f"Load the {model_size} model on {device} before recording.",
+                0,
             )
+            await websocket.close(code=4005, reason="Model not loaded")
+            return
 
-        # Load model with progress updates
-        whisper_model = await get_whisper_model(model_size, device, progress_callback)
+        whisper_model = await get_whisper_model(model_size, device)
 
         # Send ready status before starting pipeline
         await send_status("ready", "Connected. Start speaking.", 1.0)

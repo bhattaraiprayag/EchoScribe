@@ -82,6 +82,7 @@
         <button
           id="upload-button"
           class="mt-4 w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition-all duration-300 ease-in-out disabled:bg-gray-400"
+          disabled
         >
           Start Transcription
         </button>
@@ -147,8 +148,16 @@
 
         <div class="flex items-center justify-center space-x-6 mb-6">
           <button
+            id="loadModelButton"
+            class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105 disabled:bg-gray-400"
+            disabled
+          >
+            Load Model
+          </button>
+          <button
             id="startButton"
             class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out transform hover:scale-105 disabled:bg-gray-400"
+            disabled
           >
             Start Recording
           </button>
@@ -352,6 +361,7 @@
 
     <script>
       document.addEventListener("DOMContentLoaded", () => {
+        const loadModelButton = document.getElementById("loadModelButton");
         const startButton = document.getElementById("startButton");
         const stopButton = document.getElementById("stopButton");
         const statusSpan = document.getElementById("status");
@@ -385,7 +395,10 @@
         let audioContext, workletNode, mediaStream, websocket, sessionId;
         let activePolls = new Set();
         let toastTimeout;
-        let isModelLoading = false; // Track if model is being loaded/downloaded
+        let isModelLoading = false;
+        let isRecordingActive = false;
+        let isSocketConnecting = false;
+        let loadedModelKey = null;
         const progressContainer = document.getElementById("progress-container");
         const progressBarFill = document.getElementById("progress-bar-fill");
         const progressText = document.getElementById("progress-text");
@@ -424,6 +437,97 @@
           return fetch(url, options);
         };
 
+        const getSelectedModelKey = () =>
+          modelSelect.value && deviceSelect.value
+            ? `${modelSelect.value}:${deviceSelect.value}`
+            : null;
+
+        const isSelectedModelLoaded = () =>
+          Boolean(loadedModelKey && loadedModelKey === getSelectedModelKey());
+
+        const hideProgress = () => {
+          progressContainer.classList.add("hidden");
+          progressBarFill.style.width = "0%";
+          progressBarFill.className = "progress-bar-fill";
+          progressText.textContent = "";
+        };
+
+        const setProgressState = (
+          variant,
+          message,
+          progress = 0,
+          detail = "",
+        ) => {
+          statusSpan.textContent = message;
+          progressContainer.classList.remove("hidden");
+          progressBarFill.style.width = `${
+            Math.max(0, Math.min(progress, 1)) * 100
+          }%`;
+          progressBarFill.className = `progress-bar-fill ${variant}`;
+          progressText.textContent = detail;
+        };
+
+        const syncControls = () => {
+          const modelReady = isSelectedModelLoaded();
+          const hasSelectedFiles =
+            Boolean(fileUpload.files) && fileUpload.files.length > 0;
+
+          loadModelButton.textContent = isModelLoading
+            ? "Loading Model..."
+            : modelReady
+              ? "Model Loaded"
+              : "Load Model";
+
+          loadModelButton.disabled =
+            isModelLoading ||
+            isSocketConnecting ||
+            isRecordingActive ||
+            isProcessingBatch ||
+            modelReady;
+
+          startButton.disabled =
+            !modelReady ||
+            isModelLoading ||
+            isSocketConnecting ||
+            isRecordingActive ||
+            isProcessingBatch;
+
+          stopButton.disabled = !isSocketConnecting && !isRecordingActive;
+
+          const selectionLocked =
+            isModelLoading ||
+            isSocketConnecting ||
+            isRecordingActive ||
+            isProcessingBatch;
+
+          modelSelect.disabled = selectionLocked;
+          deviceSelect.disabled = selectionLocked;
+          languageSelect.disabled = selectionLocked;
+          fileUpload.disabled = selectionLocked;
+
+          uploadButton.disabled =
+            !modelReady ||
+            !hasSelectedFiles ||
+            isModelLoading ||
+            isSocketConnecting ||
+            isRecordingActive ||
+            isProcessingBatch;
+        };
+
+        const getResponseMessage = async (response, fallbackMessage) => {
+          try {
+            const data = await response.json();
+            return (
+              data?.error?.message ||
+              data?.detail ||
+              data?.message ||
+              fallbackMessage
+            );
+          } catch (error) {
+            return fallbackMessage;
+          }
+        };
+
         const initialize = async () => {
           try {
             migrateLegacyApiKey();
@@ -435,6 +539,7 @@
             populateDropdown(deviceSelect, config.devices, "cpu");
             populateDropdown(languageSelect, config.languages, "en");
             await loadSettings();
+            await refreshModelStatus();
             updateUI("idle");
           } catch (error) {
             console.error("Failed to load configuration:", error);
@@ -453,6 +558,137 @@
             option.textContent = text;
             if (value === defaultValue) option.selected = true;
             selectElement.appendChild(option);
+          }
+        };
+
+        const refreshModelStatus = async (options = {}) => {
+          const { preserveMessage = false } = options;
+          const modelKey = getSelectedModelKey();
+          if (!modelKey) {
+            loadedModelKey = null;
+            syncControls();
+            return null;
+          }
+
+          try {
+            const params = new URLSearchParams({
+              model: modelSelect.value,
+              device: deviceSelect.value,
+            });
+            const response = await fetchWithAuth(
+              `/api/model/status?${params.toString()}`,
+            );
+            if (!response.ok) {
+              throw new Error(
+                await getResponseMessage(
+                  response,
+                  "Failed to determine model readiness.",
+                ),
+              );
+            }
+
+            const status = await response.json();
+            loadedModelKey = status.loaded ? modelKey : null;
+
+            if (!preserveMessage && !isModelLoading && !isSocketConnecting) {
+              if (status.loaded) {
+                statusSpan.textContent = `Model ${status.model} is loaded on ${status.device}.`;
+              } else if (status.cached) {
+                statusSpan.textContent = `Model ${status.model} is cached. Click Load Model to prepare ${status.device}.`;
+              } else if (
+                Array.isArray(status.repairable_files) &&
+                status.repairable_files.length > 0
+              ) {
+                statusSpan.textContent =
+                  "Model cache is incomplete. Click Load Model to repair it.";
+              } else {
+                statusSpan.textContent =
+                  "Load a model to enable recording and batch transcription.";
+              }
+              hideProgress();
+            }
+
+            syncControls();
+            return status;
+          } catch (error) {
+            console.error("Failed to refresh model status:", error);
+            loadedModelKey = null;
+            if (!preserveMessage && !isModelLoading && !isSocketConnecting) {
+              statusSpan.textContent = "Could not determine model readiness.";
+              hideProgress();
+            }
+            syncControls();
+            return null;
+          }
+        };
+
+        const loadSelectedModel = async () => {
+          const model = modelSelect.value;
+          const device = deviceSelect.value;
+          if (!model || !device) {
+            updateUI("error", "Select a model and device first.");
+            return;
+          }
+
+          isModelLoading = true;
+          loadedModelKey = null;
+          syncControls();
+
+          const status = await refreshModelStatus({ preserveMessage: true });
+          if (status?.cached) {
+            setProgressState(
+              "loading",
+              `Loading ${model} on ${device}...`,
+              0.6,
+              "Using the local model cache",
+            );
+          } else if (
+            Array.isArray(status?.repairable_files) &&
+            status.repairable_files.length > 0
+          ) {
+            setProgressState(
+              "loading",
+              `Repairing and loading ${model} on ${device}...`,
+              0.35,
+              "Rebuilding missing vocabulary metadata",
+            );
+          } else {
+            setProgressState(
+              "downloading",
+              `Downloading and loading ${model} on ${device}...`,
+              0.2,
+              "Fetching model files",
+            );
+          }
+
+          const formData = new FormData();
+          formData.append("model", model);
+          formData.append("device", device);
+
+          try {
+            const response = await fetchWithAuth("/api/model/load", {
+              method: "POST",
+              body: formData,
+            });
+            if (!response.ok) {
+              throw new Error(
+                await getResponseMessage(response, "Failed to load model."),
+              );
+            }
+
+            const data = await response.json();
+            loadedModelKey = data.loaded ? getSelectedModelKey() : null;
+            if (!data.loaded) {
+              throw new Error("Model load did not complete successfully.");
+            }
+            isModelLoading = false;
+            updateUI("idle", `Model ${model} loaded on ${device}.`);
+            showToast(`Loaded ${model} on ${device}.`);
+          } catch (error) {
+            console.error("Model load failed:", error);
+            isModelLoading = false;
+            loadedModelKey = null;
+            updateUI("error", error.message || "Failed to load model.");
           }
         };
 
@@ -546,10 +782,28 @@
           const wsUrl = `${wsProtocol}//${window.location.host}/ws/${sessionId}`;
           websocket = new WebSocket(wsUrl);
 
+          const handleStatusMessage = (data) => {
+            const { status, message } = data;
+            console.log(`Status update: ${status} - ${message}`);
+
+            switch (status) {
+              case "ready":
+                updateUI("connected", message);
+                break;
+              case "error":
+                updateUI("error", message);
+                break;
+              default:
+                if (message) {
+                  statusSpan.textContent = message;
+                }
+                break;
+            }
+          };
+
           websocket.onopen = () => {
             console.log("WebSocket connection established.");
-            reconnectAttempts = 0; // Reset on successful connection
-            isModelLoading = true; // Will be set to false when 'ready' status received
+            reconnectAttempts = 0;
             updateUI("connecting");
             const config = {
               model: modelSelect.value,
@@ -589,56 +843,6 @@
             }
           };
 
-          // Handle status messages from server
-          const handleStatusMessage = (data) => {
-            const { status, message, progress } = data;
-            console.log(
-              `Status update: ${status} - ${message} (${Math.round(
-                progress * 100,
-              )}%)`,
-            );
-
-            switch (status) {
-              case "checking":
-              case "downloading":
-                isModelLoading = true;
-                statusSpan.textContent = message;
-                progressContainer.classList.remove("hidden");
-                progressBarFill.style.width = `${progress * 100}%`;
-                progressBarFill.className = "progress-bar-fill downloading";
-                progressText.textContent = `${Math.round(
-                  progress * 100,
-                )}% complete`;
-                break;
-
-              case "loading":
-                isModelLoading = true;
-                statusSpan.textContent = message;
-                progressContainer.classList.remove("hidden");
-                progressBarFill.style.width = `${progress * 100}%`;
-                progressBarFill.className = "progress-bar-fill loading";
-                progressText.textContent = "Loading model...";
-                break;
-
-              case "ready":
-                isModelLoading = false;
-                statusSpan.textContent = message;
-                progressContainer.classList.add("hidden");
-                progressBarFill.style.width = "100%";
-                progressBarFill.className = "progress-bar-fill ready";
-                // Enable recording now that model is ready
-                stopButton.disabled = false;
-                break;
-
-              case "error":
-                isModelLoading = false;
-                statusSpan.textContent = `Error: ${message}`;
-                progressContainer.classList.add("hidden");
-                updateUI("error", message);
-                break;
-            }
-          };
-
           websocket.onclose = (event) => {
             console.log(
               "WebSocket connection closed.",
@@ -646,34 +850,16 @@
               event.reason,
             );
 
-            // Server shutdown (1001) or intentional close - don't reconnect
             if (event.code === 1001 || isIntentionalDisconnect) {
-              isModelLoading = false;
-              progressContainer.classList.add("hidden");
               stopAudioProcessing(true);
               return;
             }
 
-            // Don't reconnect if model is still loading - connection is working, just slow
-            if (isModelLoading) {
-              console.log(
-                "Connection closed during model loading - not reconnecting to avoid loop",
-              );
-              isModelLoading = false;
-              progressContainer.classList.add("hidden");
-              updateUI(
-                "error",
-                "Connection lost during model loading. Please try again.",
-              );
-              stopAudioProcessing(false);
-              return;
-            }
-
-            // Unexpected close - attempt reconnect if we were recording
             if (workletNode && !isIntentionalDisconnect) {
               attemptReconnect();
             } else {
               stopAudioProcessing(false);
+              updateUI("error", "Connection lost. Please try again.");
             }
           };
 
@@ -717,15 +903,10 @@
         };
 
         const stopAudioProcessing = (intentional = true) => {
-          // Mark as intentional to prevent reconnection attempts
           if (intentional) {
             isIntentionalDisconnect = true;
             cancelReconnect();
           }
-
-          // Reset model loading state
-          isModelLoading = false;
-          progressContainer.classList.add("hidden");
 
           if (workletNode) {
             workletNode.port.postMessage({ command: "stop" });
@@ -741,6 +922,8 @@
           }
           // Clear waveform canvas
           clearWaveform();
+          isRecordingActive = false;
+          isSocketConnecting = false;
         };
 
         // Waveform visualization functions
@@ -787,6 +970,10 @@
         };
 
         const startRecording = async () => {
+          if (!isSelectedModelLoaded()) {
+            updateUI("error", "Load the selected model before recording.");
+            return;
+          }
           updateUI("connecting");
           const hasSocket = await connectWebSocket();
           if (!hasSocket) return;
@@ -800,72 +987,60 @@
         };
 
         const updateUI = (state, message = "") => {
-          const elementsToDisable = [
-            startButton,
-            stopButton,
-            modelSelect,
-            deviceSelect,
-            languageSelect,
-            uploadButton,
-          ];
-          elementsToDisable.forEach((el) => (el.disabled = true));
-
           switch (state) {
             case "idle":
-              statusSpan.textContent = "Idle";
-              progressContainer.classList.add("hidden");
-              [
-                startButton,
-                modelSelect,
-                deviceSelect,
-                languageSelect,
-                uploadButton,
-              ].forEach((el) => (el.disabled = false));
+              isSocketConnecting = false;
+              isRecordingActive = false;
+              statusSpan.textContent =
+                message ||
+                (isSelectedModelLoaded()
+                  ? `Model ${modelSelect.value} loaded on ${deviceSelect.value}.`
+                  : "Load a model to enable recording and batch transcription.");
+              if (!isModelLoading) {
+                hideProgress();
+              }
               downloadContainer.classList.add("hidden");
               break;
             case "connecting":
-              statusSpan.textContent = "Connecting...";
+              isSocketConnecting = true;
+              isRecordingActive = false;
+              statusSpan.textContent = message || "Connecting...";
               finalTranscriptSpan.textContent = "";
               interimTranscriptSpan.textContent = "";
               downloadContainer.classList.add("hidden");
-              stopButton.disabled = false; // Allow cancel during connecting
+              hideProgress();
               break;
             case "connected":
-              // This state is now handled by 'ready' status message
-              statusSpan.textContent = "Connected. Start speaking.";
-              stopButton.disabled = false;
+              isSocketConnecting = false;
+              isRecordingActive = true;
+              statusSpan.textContent = message || "Connected. Start speaking.";
+              hideProgress();
               break;
             case "stopped":
-              statusSpan.textContent = "Recording stopped.";
-              progressContainer.classList.add("hidden");
-              [
-                startButton,
-                modelSelect,
-                deviceSelect,
-                languageSelect,
-                uploadButton,
-              ].forEach((el) => (el.disabled = false));
+              isSocketConnecting = false;
+              isRecordingActive = false;
+              statusSpan.textContent = message || "Recording stopped.";
+              hideProgress();
               if (sessionId) {
                 downloadLink.href = `/download/${sessionId}`;
                 downloadContainer.classList.remove("hidden");
               }
               break;
             case "reconnecting":
+              isSocketConnecting = true;
+              isRecordingActive = false;
               statusSpan.textContent = message || "Reconnecting...";
-              stopButton.disabled = false; // Allow user to stop during reconnect
               break;
             case "error":
+              isSocketConnecting = false;
+              isRecordingActive = false;
               statusSpan.textContent = `Error: ${message}`;
-              progressContainer.classList.add("hidden");
-              [
-                startButton,
-                modelSelect,
-                deviceSelect,
-                languageSelect,
-                uploadButton,
-              ].forEach((el) => (el.disabled = false));
+              if (!isModelLoading) {
+                hideProgress();
+              }
               break;
           }
+          syncControls();
         };
 
         const scrollToBottom = () => {
@@ -1039,6 +1214,7 @@
           } else {
             filesSelectedText.textContent = `${count} files selected`;
           }
+          syncControls();
         });
 
         // Add a queued item to the UI (before upload)
@@ -1160,6 +1336,7 @@
         const processBatchQueue = async () => {
           if (isProcessingBatch || batchQueue.length === 0) return;
           isProcessingBatch = true;
+          syncControls();
 
           while (batchQueue.length > 0) {
             const item = batchQueue[0]; // Get first item but don't remove yet
@@ -1195,6 +1372,14 @@
                 method: "POST",
                 body: formData,
               });
+              if (!response.ok) {
+                throw new Error(
+                  await getResponseMessage(
+                    response,
+                    `Failed to start transcription for ${fileName}.`,
+                  ),
+                );
+              }
               const data = await response.json();
 
               // Store job_id on element for cancel functionality
@@ -1226,7 +1411,7 @@
               console.error("File upload error:", error);
               statusSpan.textContent = "Upload failed";
               statusSpan.className = "status text-red-600";
-              showToast(`Failed to upload: ${fileName}`);
+              showToast(error.message || `Failed to upload: ${fileName}`);
             }
 
             // Remove from queue after processing
@@ -1234,6 +1419,7 @@
           }
 
           isProcessingBatch = false;
+          syncControls();
         };
 
         // Wait for a job to complete before processing next
@@ -1312,6 +1498,13 @@
         };
 
         uploadButton.addEventListener("click", async () => {
+          if (!isSelectedModelLoaded()) {
+            updateUI(
+              "error",
+              "Load the selected model before starting batch transcription.",
+            );
+            return;
+          }
           const files = fileUpload.files;
           if (!files || files.length === 0) {
             alert("Please select at least one file to upload.");
@@ -1333,6 +1526,7 @@
           // Clear file input
           fileUpload.value = "";
           filesSelectedText.textContent = "";
+          syncControls();
 
           // Start processing queue
           processBatchQueue();
@@ -1357,6 +1551,22 @@
             .padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
         }
 
+        const handleModelSelectionChange = async () => {
+          loadedModelKey = null;
+          syncControls();
+          await refreshModelStatus();
+          updateUI("idle");
+        };
+
+        loadModelButton.addEventListener("click", () => {
+          void loadSelectedModel();
+        });
+        modelSelect.addEventListener("change", () => {
+          void handleModelSelectionChange();
+        });
+        deviceSelect.addEventListener("change", () => {
+          void handleModelSelectionChange();
+        });
         startButton.addEventListener("click", startRecording);
         stopButton.addEventListener("click", stopRecording);
         toastClose.addEventListener("click", hideToast);
